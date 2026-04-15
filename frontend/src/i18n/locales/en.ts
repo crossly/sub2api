@@ -10,15 +10,14 @@ export default {
     login: 'Login',
     getStarted: 'Get Started',
     goToDashboard: 'Go to Dashboard',
-    // User-focused value proposition
     heroSubtitle: 'One Key, All AI Models',
-    heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+    heroDescription:
+      'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
     tags: {
       subscriptionToApi: 'Subscription to API',
       stickySession: 'Session Persistence',
       realtimeBilling: 'Pay As You Go'
     },
-    // Pain points section
     painPoints: {
       title: 'Sound Familiar?',
       items: {
@@ -40,7 +39,6 @@ export default {
         }
       }
     },
-    // Solutions section
     solutions: {
       title: 'We Solve These Problems',
       subtitle: 'Three simple steps to stress-free AI access'
@@ -53,7 +51,6 @@ export default {
       balanceQuota: 'Pay What You Use',
       balanceQuotaDesc: 'Usage-based billing with quota limits. Full visibility into team consumption.'
     },
-    // Comparison section
     comparison: {
       title: 'Why Choose Us?',
       headers: {
@@ -94,12 +91,12 @@ export default {
       description: 'One API, Multiple Choices',
       supported: 'Supported',
       soon: 'Soon',
+      chatgpt: 'ChatGPT',
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
       more: 'More'
     },
-    // CTA section
     cta: {
       title: 'Ready to Get Started?',
       description: 'Sign up now and get free trial credits to experience seamless AI access',

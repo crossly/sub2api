@@ -10,15 +10,14 @@ export default {
     login: '登录',
     getStarted: '立即开始',
     goToDashboard: '进入控制台',
-    // 新增：面向用户的价值主张
     heroSubtitle: '一个密钥，畅用多个 AI 模型',
-    heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
+    heroDescription:
+      '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
     tags: {
       subscriptionToApi: '订阅转 API',
       stickySession: '会话保持',
       realtimeBilling: '按量计费'
     },
-    // 用户痛点区块
     painPoints: {
       title: '你是否也遇到这些问题？',
       items: {
@@ -40,7 +39,6 @@ export default {
         }
       }
     },
-    // 解决方案区块
     solutions: {
       title: '我们帮你解决',
       subtitle: '简单三步，开始省心使用 AI'
@@ -53,7 +51,6 @@ export default {
       balanceQuota: '用多少付多少',
       balanceQuotaDesc: '按实际使用量计费，支持设置配额上限，团队用量一目了然。'
     },
-    // 优势对比
     comparison: {
       title: '为什么选择我们？',
       headers: {
@@ -94,12 +91,12 @@ export default {
       description: '一个 API，多种选择',
       supported: '已支持',
       soon: '即将推出',
+      chatgpt: 'ChatGPT',
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
       more: '更多'
     },
-    // CTA 区块
     cta: {
       title: '准备好开始了吗？',
       description: '注册即可获得免费试用额度，体验一站式 AI 服务',
