@@ -20,54 +20,121 @@
       <div class="absolute bottom-[-8rem] left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-primary-200/30 blur-3xl dark:bg-primary-700/20"></div>
     </div>
 
-    <header class="relative z-20 px-6 py-5">
-      <nav class="mx-auto flex max-w-7xl items-center justify-between">
-        <div class="flex items-center gap-4">
-          <div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-white/70 bg-white/80 shadow-[0_16px_40px_rgba(58,33,113,0.12)] backdrop-blur dark:border-white/10 dark:bg-white/5 dark:shadow-[0_16px_50px_rgba(0,0,0,0.35)]">
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-9 w-9 object-contain" />
+    <header class="relative z-20 px-4 py-4 sm:px-6 sm:py-5">
+      <nav class="mx-auto flex max-w-7xl items-center justify-between gap-3">
+        <div class="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
+          <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/70 bg-white/80 shadow-[0_16px_40px_rgba(58,33,113,0.12)] backdrop-blur dark:border-white/10 dark:bg-white/5 dark:shadow-[0_16px_50px_rgba(0,0,0,0.35)] sm:h-12 sm:w-12">
+            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-8 w-8 object-contain sm:h-9 sm:w-9" />
           </div>
-          <div>
-            <p class="font-display text-lg font-semibold tracking-[-0.03em] text-gray-950 dark:text-white">
+          <div class="min-w-0">
+            <p class="font-display truncate text-base font-semibold tracking-[-0.03em] text-gray-950 dark:text-white sm:text-lg">
               {{ siteName }}
             </p>
-            <p class="text-sm text-gray-500 dark:text-dark-300">{{ t('home.tags.subscriptionToApi') }}</p>
+            <p class="truncate text-xs text-gray-500 dark:text-dark-300 sm:text-sm">{{ t('home.tags.subscriptionToApi') }}</p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <LocaleSwitcher />
-          <a
-            v-if="docUrl"
-            :href="docUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200"
-            :title="t('home.viewDocs')"
-          >
-            <Icon name="book" size="md" />
-          </a>
-          <button
-            @click="toggleTheme"
-            class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200"
-            :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
-          >
-            <Icon v-if="isDark" name="sun" size="md" />
-            <Icon v-else name="moon" size="md" />
-          </button>
+        <div class="ml-2 flex flex-shrink-0 items-center gap-2">
+          <div class="hidden items-center gap-3 sm:flex">
+            <LocaleSwitcher />
+            <a
+              v-if="docUrl"
+              :href="docUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200"
+              :title="t('home.viewDocs')"
+            >
+              <Icon name="book" size="md" />
+            </a>
+            <button
+              @click="toggleTheme"
+              class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200"
+              :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
+            >
+              <Icon v-if="isDark" name="sun" size="md" />
+              <Icon v-else name="moon" size="md" />
+            </button>
+            <router-link
+              :to="isAuthenticated ? dashboardPath : '/login'"
+              class="inline-flex shrink-0 items-center gap-2 rounded-full border border-primary-500/10 bg-gray-950 px-5 py-2.5 text-sm font-medium text-white shadow-[0_14px_28px_rgba(71,46,140,0.25)] transition hover:bg-primary-700 dark:border-primary-400/20 dark:bg-primary-500 dark:hover:bg-primary-400"
+            >
+              <span
+                v-if="isAuthenticated"
+                class="flex h-6 w-6 items-center justify-center rounded-full bg-white/15 text-[11px] font-semibold"
+              >
+                {{ userInitial }}
+              </span>
+              {{ isAuthenticated ? t('home.dashboard') : t('home.login') }}
+            </router-link>
+          </div>
+
           <router-link
             :to="isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex items-center gap-2 rounded-full border border-primary-500/10 bg-gray-950 px-5 py-2.5 text-sm font-medium text-white shadow-[0_14px_28px_rgba(71,46,140,0.25)] transition hover:bg-primary-700 dark:border-primary-400/20 dark:bg-primary-500 dark:hover:bg-primary-400"
+            class="inline-flex sm:hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-primary-500/10 bg-gray-950 px-3 py-2 text-xs font-medium text-white shadow-[0_14px_28px_rgba(71,46,140,0.25)] transition hover:bg-primary-700 dark:border-primary-400/20 dark:bg-primary-500 dark:hover:bg-primary-400"
+            @click="closeMobileMenu"
           >
             <span
               v-if="isAuthenticated"
-              class="flex h-6 w-6 items-center justify-center rounded-full bg-white/15 text-[11px] font-semibold"
+              class="flex h-5 w-5 items-center justify-center rounded-full bg-white/15 text-[10px] font-semibold"
             >
               {{ userInitial }}
             </span>
-            {{ isAuthenticated ? t('home.dashboard') : t('home.login') }}
+            <span class="max-w-[5.5rem] truncate">{{ isAuthenticated ? t('home.dashboard') : t('home.login') }}</span>
           </router-link>
+
+          <button
+            @click="toggleMobileMenu"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200 sm:hidden"
+            :aria-label="mobileMenuOpen ? 'Close mobile menu' : 'Open mobile menu'"
+            :aria-expanded="mobileMenuOpen"
+          >
+            <Icon :name="mobileMenuOpen ? 'x' : 'menu'" size="md" />
+          </button>
         </div>
       </nav>
+
+      <transition name="mobile-menu">
+        <div
+          v-if="mobileMenuOpen"
+          class="mt-3 rounded-[1.75rem] border border-white/70 bg-white/90 p-3 shadow-[0_20px_50px_rgba(34,16,74,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#161123]/90 sm:hidden"
+        >
+          <div class="space-y-2">
+            <div class="flex items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-dark-400">Language</p>
+                <p class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ t('common.language') }}</p>
+              </div>
+              <LocaleSwitcher />
+            </div>
+
+            <button
+              @click="handleMobileThemeToggle"
+              class="flex w-full items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 text-left transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-primary-500/30 dark:hover:text-primary-200"
+            >
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-dark-400">Theme</p>
+                <p class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+                  {{ isDark ? t('home.switchToLight') : t('home.switchToDark') }}
+                </p>
+              </div>
+              <Icon :name="isDark ? 'sun' : 'moon'" size="md" />
+            </button>
+
+            <a
+              v-if="docUrl"
+              :href="docUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="flex items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 text-sm font-medium text-gray-900 transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:border-primary-500/30 dark:hover:text-primary-200"
+              @click="closeMobileMenu"
+            >
+              <span>{{ t('home.viewDocs') }}</span>
+              <Icon name="externalLink" size="sm" />
+            </a>
+          </div>
+        </div>
+      </transition>
     </header>
 
     <main class="relative z-10 px-6 pb-10 pt-6 md:pt-10">
@@ -196,6 +263,7 @@ const isHomeContentUrl = computed(() => {
 })
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const mobileMenuOpen = ref(false)
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -250,6 +318,19 @@ function toggleTheme() {
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
 
+function toggleMobileMenu() {
+  mobileMenuOpen.value = !mobileMenuOpen.value
+}
+
+function closeMobileMenu() {
+  mobileMenuOpen.value = false
+}
+
+function handleMobileThemeToggle() {
+  toggleTheme()
+  closeMobileMenu()
+}
+
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
   if (
@@ -269,3 +350,16 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.mobile-menu-enter-active,
+.mobile-menu-leave-active {
+  transition: all 0.18s ease;
+}
+
+.mobile-menu-enter-from,
+.mobile-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+</style>
