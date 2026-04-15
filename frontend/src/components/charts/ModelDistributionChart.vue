@@ -140,7 +140,7 @@
                 <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
                   {{ formatTokens(model.total_tokens) }}
                 </td>
-                <td class="py-1.5 text-right text-green-600 dark:text-green-400">
+                <td class="py-1.5 text-right text-primary-600 dark:text-primary-300">
                   ${{ formatCost(model.actual_cost) }}
                 </td>
                 <td class="py-1.5 text-right text-orange-500 dark:text-orange-400">
@@ -222,7 +222,7 @@
               <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
                 {{ formatTokens(item.tokens) }}
               </td>
-              <td class="py-1.5 text-right text-green-600 dark:text-green-400">
+              <td class="py-1.5 text-right text-primary-600 dark:text-primary-300">
                 ${{ formatCost(item.actual_cost) }}
               </td>
             </tr>
@@ -331,18 +331,18 @@ const enableRankingView = computed(() => props.enableRankingView)
 const activeView = ref<'model_distribution' | 'spending_ranking'>('model_distribution')
 
 const chartColors = [
-  '#3b82f6',
-  '#10b981',
+  '#4f46e5',
+  '#7c3aed',
   '#f59e0b',
   '#ef4444',
   '#8b5cf6',
   '#ec4899',
-  '#14b8a6',
+  '#a855f7',
   '#f97316',
   '#6366f1',
-  '#84cc16',
-  '#06b6d4',
-  '#a855f7'
+  '#d946ef',
+  '#3b82f6',
+  '#c084fc'
 ]
 
 const displayModelStats = computed(() => {
