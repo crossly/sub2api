@@ -83,58 +83,54 @@
             <span class="max-w-[5.5rem] truncate">{{ isAuthenticated ? t('home.dashboard') : t('home.login') }}</span>
           </router-link>
 
-          <button
-            @click="toggleMobileMenu"
-            class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200 sm:hidden"
-            :aria-label="mobileMenuOpen ? 'Close mobile menu' : 'Open mobile menu'"
-            :aria-expanded="mobileMenuOpen"
-          >
-            <Icon :name="mobileMenuOpen ? 'x' : 'menu'" size="md" />
-          </button>
-        </div>
-      </nav>
-
-      <transition name="mobile-menu">
-        <div
-          v-if="mobileMenuOpen"
-          class="mt-3 rounded-[1.75rem] border border-white/70 bg-white/90 p-3 shadow-[0_20px_50px_rgba(34,16,74,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#161123]/90 sm:hidden"
-        >
-          <div class="space-y-2">
-            <div class="flex items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]">
-              <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-dark-400">Language</p>
-                <p class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ t('common.language') }}</p>
-              </div>
-              <LocaleSwitcher />
-            </div>
-
+          <div class="relative sm:hidden" ref="mobileMenuRef">
             <button
-              @click="handleMobileThemeToggle"
-              class="flex w-full items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 text-left transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-primary-500/30 dark:hover:text-primary-200"
+              @click="toggleMobileMenu"
+              class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-200/70 bg-white/80 text-gray-600 shadow-sm backdrop-blur transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/5 dark:text-dark-300 dark:hover:border-primary-500/40 dark:hover:text-primary-200"
+              :aria-label="mobileMenuOpen ? 'Close mobile menu' : 'Open mobile menu'"
+              :aria-expanded="mobileMenuOpen"
             >
-              <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-dark-400">Theme</p>
-                <p class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-                  {{ isDark ? t('home.switchToLight') : t('home.switchToDark') }}
-                </p>
-              </div>
-              <Icon :name="isDark ? 'sun' : 'moon'" size="md" />
+              <Icon :name="mobileMenuOpen ? 'x' : 'menu'" size="md" />
             </button>
 
-            <a
-              v-if="docUrl"
-              :href="docUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="flex items-center justify-between rounded-2xl border border-gray-200/80 bg-white/70 px-4 py-3 text-sm font-medium text-gray-900 transition hover:border-primary-200 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:border-primary-500/30 dark:hover:text-primary-200"
-              @click="closeMobileMenu"
-            >
-              <span>{{ t('home.viewDocs') }}</span>
-              <Icon name="externalLink" size="sm" />
-            </a>
+            <transition name="dropdown">
+              <div
+                v-if="mobileMenuOpen"
+                class="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+              >
+                <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700">
+                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-dark-400">Menu</p>
+                </div>
+
+                <div class="flex items-center justify-between px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+                  <span>{{ t('common.language') }}</span>
+                  <LocaleSwitcher />
+                </div>
+
+                <button
+                  @click="handleMobileThemeToggle"
+                  class="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                >
+                  <span>{{ isDark ? t('home.switchToLight') : t('home.switchToDark') }}</span>
+                  <Icon :name="isDark ? 'sun' : 'moon'" size="sm" />
+                </button>
+
+                <a
+                  v-if="docUrl"
+                  :href="docUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                  @click="closeMobileMenu"
+                >
+                  <span>{{ t('home.viewDocs') }}</span>
+                  <Icon name="externalLink" size="sm" />
+                </a>
+              </div>
+            </transition>
           </div>
         </div>
-      </transition>
+      </nav>
     </header>
 
     <main class="relative z-10 px-6 pb-10 pt-6 md:pt-10">
@@ -241,7 +237,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
@@ -264,6 +260,7 @@ const isHomeContentUrl = computed(() => {
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const mobileMenuOpen = ref(false)
+const mobileMenuRef = ref<HTMLElement | null>(null)
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -331,6 +328,12 @@ function handleMobileThemeToggle() {
   closeMobileMenu()
 }
 
+function handleClickOutside(event: MouseEvent) {
+  if (mobileMenuRef.value && !mobileMenuRef.value.contains(event.target as Node)) {
+    closeMobileMenu()
+  }
+}
+
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
   if (
@@ -345,21 +348,26 @@ function initTheme() {
 onMounted(() => {
   initTheme()
   authStore.checkAuth()
+  document.addEventListener('click', handleClickOutside)
   if (!appStore.publicSettingsLoaded) {
     appStore.fetchPublicSettings()
   }
 })
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 </script>
 
 <style scoped>
-.mobile-menu-enter-active,
-.mobile-menu-leave-active {
-  transition: all 0.18s ease;
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: all 0.15s ease;
 }
 
-.mobile-menu-enter-from,
-.mobile-menu-leave-to {
+.dropdown-enter-from,
+.dropdown-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: scale(0.95) translateY(-4px);
 }
 </style>
