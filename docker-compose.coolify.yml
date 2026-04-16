@@ -91,8 +91,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -115,8 +113,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
       - PGDATA=/var/lib/postgresql/data
       - TZ=${TZ:-Asia/Shanghai}
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
       interval: 10s
@@ -143,8 +139,6 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -156,7 +150,3 @@ volumes:
   sub2api_data:
   postgres_data:
   redis_data:
-
-networks:
-  sub2api-network:
-    driver: bridge
