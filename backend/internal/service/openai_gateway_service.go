@@ -1683,10 +1683,8 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	if err != nil || latest == nil {
 		return nil
 	}
-	if !latest.IsSchedulable() || !latest.IsOpenAI() {
-		return nil
-	}
-	if requestedModel != "" && !latest.IsModelSupported(requestedModel) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !s.isOpenAIAccountSelectable(latest, requestedModel, settings) {
 		return nil
 	}
 	return latest
@@ -1704,6 +1702,9 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	}
 	if err != nil || account == nil {
 		return account, err
+	}
+	if !s.isOpenAIAccountSelectable(account, "", settings) {
+		return nil, nil
 	}
 	return account, nil
 }
