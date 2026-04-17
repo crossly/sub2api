@@ -1,62 +1,22 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="44" y1="32" x2="472" y2="484" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#140A28"/>
-      <stop offset="0.52" stop-color="#251044"/>
-      <stop offset="1" stop-color="#4A1D82"/>
+    <linearGradient id="ring" x1="92" y1="78" x2="406" y2="434" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2DEFF"/>
+      <stop offset="0.32" stop-color="#D69DFF"/>
+      <stop offset="0.72" stop-color="#A94FFF"/>
+      <stop offset="1" stop-color="#7B2CF8"/>
     </linearGradient>
-    <linearGradient id="mark" x1="98" y1="84" x2="406" y2="422" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F0D9FF"/>
-      <stop offset="0.28" stop-color="#D6A7FF"/>
-      <stop offset="0.68" stop-color="#A85DFF"/>
-      <stop offset="1" stop-color="#7B2FF7"/>
+    <linearGradient id="bar" x1="240" y1="126" x2="292" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7A32F6"/>
+      <stop offset="1" stop-color="#451186"/>
     </linearGradient>
-    <linearGradient id="bar" x1="230" y1="118" x2="298" y2="396" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFF8FF"/>
-      <stop offset="1" stop-color="#E2B8FF"/>
+    <linearGradient id="shine" x1="118" y1="102" x2="278" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="glow" x1="90" y1="76" x2="246" y2="204" gradientUnits="userSpaceOnUse">
-      <stop stop-color="white" stop-opacity="0.44"/>
-      <stop offset="1" stop-color="white" stop-opacity="0"/>
-    </linearGradient>
-    <filter id="shadow" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
-      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-      <feOffset dy="18"/>
-      <feGaussianBlur stdDeviation="18"/>
-      <feComposite in2="hardAlpha" operator="out"/>
-      <feColorMatrix type="matrix" values="0 0 0 0 0.0862745 0 0 0 0 0.0392157 0 0 0 0 0.176471 0 0 0 0.36 0"/>
-      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
-      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
-    </filter>
   </defs>
 
-  <g filter="url(#shadow)">
-    <rect x="10" y="10" width="492" height="492" rx="136" fill="url(#bg)"/>
-    <rect x="18" y="18" width="476" height="476" rx="128" stroke="#F4E7FF" stroke-opacity="0.1" stroke-width="2"/>
-
-    <path
-      fill-rule="evenodd"
-      clip-rule="evenodd"
-      d="M154 56H358C427.588 56 456 84.4116 456 154V358C456 427.588 427.588 456 358 456H154C84.4116 456 56 427.588 56 358V154C56 84.4116 84.4116 56 154 56ZM188 118C139.399 118 118 139.399 118 188V324C118 372.601 139.399 394 188 394H324C372.601 394 394 372.601 394 324V188C394 139.399 372.601 118 324 118H188Z"
-      fill="url(#mark)"
-    />
-
-    <path
-      d="M148 80H348C383.346 80 409.56 94.9184 427 126"
-      stroke="url(#glow)"
-      stroke-width="28"
-      stroke-linecap="round"
-    />
-
-    <rect x="222" y="114" width="68" height="284" rx="34" fill="url(#bar)"/>
-
-    <path
-      d="M164 438H348"
-      stroke="#0D0720"
-      stroke-opacity="0.18"
-      stroke-width="12"
-      stroke-linecap="round"
-    />
-  </g>
+  <rect x="76" y="76" width="360" height="360" rx="118" stroke="url(#ring)" stroke-width="72"/>
+  <path d="M126 118H318" stroke="url(#shine)" stroke-width="26" stroke-linecap="round"/>
+  <rect x="228" y="126" width="56" height="260" rx="28" fill="url(#bar)"/>
 </svg>
