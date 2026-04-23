@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"golang.org/x/sync/singleflight"
 	"go.uber.org/zap"
 )
 
@@ -272,6 +273,24 @@ type accountWriteThrottle struct {
 	lastByID    map[int64]time.Time
 }
 
+type openAIOverLimitModeSettings struct {
+	Enabled         bool
+	CooldownSeconds int
+}
+
+type cachedOpenAIOverLimitModeSettings struct {
+	settings  openAIOverLimitModeSettings
+	expiresAt int64
+}
+
+const (
+	openAIOverLimitSettingsCacheTTL  = 5 * time.Second
+	openAIOverLimitSettingsDBTimeout = 2 * time.Second
+)
+
+var openAIOverLimitSettingsCache atomic.Value // *cachedOpenAIOverLimitModeSettings
+var openAIOverLimitSettingsSF singleflight.Group
+
 func newAccountWriteThrottle(minInterval time.Duration) *accountWriteThrottle {
 	return &accountWriteThrottle{
 		minInterval: minInterval,
@@ -330,6 +349,7 @@ type OpenAIGatewayService struct {
 	resolver              *ModelPricingResolver
 	channelService        *ChannelService
 	balanceNotifyService  *BalanceNotifyService
+	settingService        *SettingService
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -342,6 +362,7 @@ type OpenAIGatewayService struct {
 	openaiAccountStats            *openAIAccountRuntimeStats
 
 	openaiWSFallbackUntil sync.Map // key: int64(accountID), value: time.Time
+	openAIOverLimitUntil  sync.Map // key: string(accountID|model), value: time.Time
 	openaiWSRetryMetrics  openAIWSRetryMetrics
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle *accountWriteThrottle
@@ -478,6 +499,140 @@ func (s *OpenAIGatewayService) getCodexSnapshotThrottle() *accountWriteThrottle 
 		return s.codexSnapshotThrottle
 	}
 	return defaultOpenAICodexSnapshotPersistThrottle
+}
+
+func (s *OpenAIGatewayService) SetSettingService(settingService *SettingService) {
+	if s == nil {
+		return
+	}
+	s.settingService = settingService
+}
+
+func (s *OpenAIGatewayService) openAIOverLimitSettingRepo() SettingRepository {
+	if s == nil {
+		return nil
+	}
+	if s.settingService != nil {
+		return s.settingService.settingRepo
+	}
+	if s.rateLimitService != nil && s.rateLimitService.settingService != nil {
+		return s.rateLimitService.settingService.settingRepo
+	}
+	return nil
+}
+
+func (s *OpenAIGatewayService) getOpenAIOverLimitModeSettings(ctx context.Context) openAIOverLimitModeSettings {
+	if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.settings
+		}
+	}
+
+	result, _, _ := openAIOverLimitSettingsSF.Do("openai_over_limit_settings", func() (any, error) {
+		if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.settings, nil
+			}
+		}
+
+		settings := openAIOverLimitModeSettings{}
+		if repo := s.openAIOverLimitSettingRepo(); repo != nil {
+			dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIOverLimitSettingsDBTimeout)
+			defer cancel()
+
+			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitModeEnabled); err == nil {
+				settings.Enabled = strings.EqualFold(strings.TrimSpace(value), "true")
+			}
+			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitCooldownSeconds); err == nil {
+				if seconds, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil && seconds > 0 {
+					settings.CooldownSeconds = seconds
+				}
+			}
+		}
+
+		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitModeSettings{
+			settings:  settings,
+			expiresAt: time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
+		})
+		return settings, nil
+	})
+
+	settings, _ := result.(openAIOverLimitModeSettings)
+	return settings
+}
+
+func openAIOverLimitCooldownKey(accountID int64, requestedModel string) string {
+	return strconv.FormatInt(accountID, 10) + "|" + strings.TrimSpace(requestedModel)
+}
+
+func (s *OpenAIGatewayService) markOpenAIOverLimitCooldown(accountID int64, requestedModel string, cooldown time.Duration) {
+	if s == nil || accountID <= 0 || cooldown <= 0 {
+		return
+	}
+	s.openAIOverLimitUntil.Store(openAIOverLimitCooldownKey(accountID, requestedModel), time.Now().Add(cooldown))
+}
+
+func (s *OpenAIGatewayService) isOpenAIOverLimitCooldownActive(accountID int64, requestedModel string, now time.Time) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+
+	keys := []string{openAIOverLimitCooldownKey(accountID, "")}
+	if requestedModel = strings.TrimSpace(requestedModel); requestedModel != "" {
+		keys = append(keys, openAIOverLimitCooldownKey(accountID, requestedModel))
+	}
+
+	for _, key := range keys {
+		untilValue, ok := s.openAIOverLimitUntil.Load(key)
+		if !ok {
+			continue
+		}
+		until, ok := untilValue.(time.Time)
+		if !ok {
+			s.openAIOverLimitUntil.Delete(key)
+			continue
+		}
+		if now.Before(until) {
+			return true
+		}
+		s.openAIOverLimitUntil.Delete(key)
+	}
+
+	return false
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, requestedModel string, settings openAIOverLimitModeSettings) bool {
+	if account == nil || !account.IsOpenAI() || !account.IsActive() || !account.Schedulable {
+		return false
+	}
+
+	now := time.Now()
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
+		return false
+	}
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		return false
+	}
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		return false
+	}
+	if account.IsAPIKeyOrBedrock() && account.IsQuotaExceeded() {
+		return false
+	}
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+		return false
+	}
+
+	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+		if !settings.Enabled {
+			return false
+		}
+		if s.isOpenAIOverLimitCooldownActive(account.ID, requestedModel, now) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (s *OpenAIGatewayService) billingDeps() *billingDeps {
@@ -1275,7 +1430,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		return nil
 	}
 
-	account, err := s.getSchedulableAccount(ctx, accountID)
+	account, err := s.getAccount(ctx, accountID)
 	if err != nil {
 		return nil
 	}
@@ -1289,10 +1444,8 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !account.IsSchedulable() || !account.IsOpenAI() {
-		return nil
-	}
-	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !s.isOpenAIAccountSelectable(account, requestedModel, settings) {
 		return nil
 	}
 	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel)
@@ -1450,19 +1603,19 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		_, excluded := excludedIDs[accountID]
 		return excluded
 	}
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
 
 	// ============ Layer 1: Sticky session ============
 	if sessionHash != "" {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
-			account, err := s.getSchedulableAccount(ctx, accountID)
+			account, err := s.getAccount(ctx, accountID)
 			if err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && account.IsSchedulable() && account.IsOpenAI() &&
-					(requestedModel == "" || account.IsModelSupported(requestedModel)) {
+				if !clearSticky && s.isOpenAIAccountSelectable(account, requestedModel, settings) {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1500,10 +1653,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		// Scheduler snapshots can be temporarily stale (bucket rebuild is throttled);
 		// re-check schedulability here so recently rate-limited/overloaded accounts
 		// are not selected again before the bucket is rebuilt.
-		if !acc.IsSchedulable() {
-			continue
-		}
-		if requestedModel != "" && !acc.IsModelSupported(requestedModel) {
+		if !s.isOpenAIAccountSelectable(acc, requestedModel, settings) {
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel) {
@@ -1662,10 +1812,8 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 		fresh = current
 	}
 
-	if !fresh.IsSchedulable() || !fresh.IsOpenAI() {
-		return nil
-	}
-	if requestedModel != "" && !fresh.IsModelSupported(requestedModel) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !s.isOpenAIAccountSelectable(fresh, requestedModel, settings) {
 		return nil
 	}
 	return fresh
@@ -1703,10 +1851,24 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	if err != nil || account == nil {
 		return account, err
 	}
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
 	if !s.isOpenAIAccountSelectable(account, "", settings) {
 		return nil, nil
 	}
 	return account, nil
+}
+
+func (s *OpenAIGatewayService) getAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if s.schedulerSnapshot != nil {
+		return s.schedulerSnapshot.GetAccount(ctx, accountID)
+	}
+	if s.accountRepo == nil {
+		return nil, nil
+	}
+	return s.accountRepo.GetByID(ctx, accountID)
 }
 
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {

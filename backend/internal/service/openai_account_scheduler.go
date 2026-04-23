@@ -832,10 +832,16 @@ func (s *defaultOpenAIAccountScheduler) SnapshotMetrics() OpenAIAccountScheduler
 }
 
 func (s *OpenAIGatewayService) openAIAdvancedSchedulerSettingRepo() SettingRepository {
-	if s == nil || s.rateLimitService == nil || s.rateLimitService.settingService == nil {
+	if s == nil {
 		return nil
 	}
-	return s.rateLimitService.settingService.settingRepo
+	if s.settingService != nil {
+		return s.settingService.settingRepo
+	}
+	if s.rateLimitService != nil && s.rateLimitService.settingService != nil {
+		return s.rateLimitService.settingService.settingRepo
+	}
+	return nil
 }
 
 func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerEnabled(ctx context.Context) bool {

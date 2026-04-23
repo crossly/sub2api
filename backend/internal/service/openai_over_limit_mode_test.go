@@ -119,6 +119,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeAllo
 		accountRepo:       openAIOverLimitAccountRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}},
 		cfg:               &config.Config{},
 		schedulerSnapshot: &SchedulerSnapshotService{cache: &openAISnapshotCacheStub{
+			snapshotAccounts: []*Account{&account},
 			accountsByID: map[int64]*Account{
 				account.ID: &account,
 			},
