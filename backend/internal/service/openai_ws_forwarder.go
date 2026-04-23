@@ -3808,6 +3808,9 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 	if responseID == "" {
 		return nil, nil
 	}
+	if s.shouldIgnorePreviousResponseForOpenAIOverLimit(ctx, responseID) {
+		return nil, nil
+	}
 	store := s.getOpenAIWSStateStore()
 	if store == nil {
 		return nil, nil

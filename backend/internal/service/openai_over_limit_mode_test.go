@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -496,6 +497,74 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesPreviousResponseFallbackAccount(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(51131)
+	rateLimitedUntil := time.Now().Add(30 * time.Minute)
+	primary := Account{
+		ID:               51131,
+		Platform:         PlatformOpenAI,
+		Type:             AccountTypeAPIKey,
+		Status:           StatusActive,
+		Schedulable:      true,
+		Concurrency:      1,
+		Priority:         1,
+		RateLimitResetAt: &rateLimitedUntil,
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+	backup := Account{
+		ID:          51132,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    11,
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+
+	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		openAIAdvancedSchedulerSettingKey:        "true",
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+	})
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	store := NewOpenAIWSStateStore(&schedulerTestGatewayCache{})
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{primary, backup}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		openaiWSStateStore: store,
+	}
+	svc.SetSettingService(settingService)
+
+	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_over_limit_backup", backup.ID, time.Hour))
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"resp_prev_over_limit_backup",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, primary.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickyPreviousHit)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsActiveOpenAIOverLimitShortCooldown(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(52001)
@@ -535,7 +604,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 	}
 	svc.SetSettingService(settingService)
-	svc.markOpenAIOverLimitCooldown(primary.ID, "", time.Minute)
+	svc.markOpenAIOverLimitCooldown(primary.ID, "gpt-5.1", time.Minute)
 
 	selection, _, err := svc.SelectAccountWithScheduler(
 		ctx,
@@ -553,7 +622,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 }
 
 func TestOpenAIGatewayService_HandleFailoverSideEffects_MarksOpenAIOverLimitCooldown(t *testing.T) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), ctxkey.Model, "gpt-5.1")
 	account := &Account{
 		ID:          53001,
 		Platform:    PlatformOpenAI,
@@ -577,7 +646,8 @@ func TestOpenAIGatewayService_HandleFailoverSideEffects_MarksOpenAIOverLimitCool
 
 	svc.handleFailoverSideEffects(ctx, resp, account)
 
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "", time.Now()))
+	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
+	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
 }
 
 func TestOpenAIGatewayService_GetOpenAIOverLimitModeSettings_NormalizesCooldownToTenWhenEnabled(t *testing.T) {
@@ -639,6 +709,7 @@ func TestOpenAIGatewayService_HandleCompatErrorResponse_MarksOpenAIOverLimitCool
 		SettingKeyOpenAIOverLimitModeEnabled:     "true",
 		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
 	}))
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Model, "gpt-5.1"))
 
 	resp := &http.Response{
 		StatusCode: http.StatusTooManyRequests,
@@ -649,5 +720,6 @@ func TestOpenAIGatewayService_HandleCompatErrorResponse_MarksOpenAIOverLimitCool
 	_, err := svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
 
 	require.Error(t, err)
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "", time.Now()))
+	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
+	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
 }
