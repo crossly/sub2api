@@ -1806,6 +1806,17 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if settings.Enabled {
+		accounts, err := s.listOpenAIAccountsForOverLimitMode(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if len(accounts) > 0 {
+			return accounts, nil
+		}
+	}
+
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, PlatformOpenAI, false)
 		return accounts, err
@@ -1823,6 +1834,49 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 	return accounts, nil
+}
+
+func (s *OpenAIGatewayService) listOpenAIAccountsForOverLimitMode(ctx context.Context, groupID *int64) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		if s != nil && s.schedulerSnapshot != nil {
+			accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, PlatformOpenAI, false)
+			return accounts, err
+		}
+		return nil, nil
+	}
+
+	if groupID != nil {
+		accounts, err := s.accountRepo.ListByGroup(ctx, *groupID)
+		if err != nil {
+			return nil, fmt.Errorf("query group accounts failed: %w", err)
+		}
+		return filterActiveOpenAIAccounts(accounts, false), nil
+	}
+
+	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return nil, fmt.Errorf("query openai accounts failed: %w", err)
+	}
+	onlyUngrouped := s.cfg == nil || s.cfg.RunMode != config.RunModeSimple
+	return filterActiveOpenAIAccounts(accounts, onlyUngrouped), nil
+}
+
+func filterActiveOpenAIAccounts(accounts []Account, onlyUngrouped bool) []Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	result := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Platform != PlatformOpenAI || !account.IsActive() {
+			continue
+		}
+		if onlyUngrouped && len(account.GroupIDs) > 0 {
+			continue
+		}
+		result = append(result, account)
+	}
+	return result
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {

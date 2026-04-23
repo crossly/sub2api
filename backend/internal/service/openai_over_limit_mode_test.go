@@ -24,6 +24,10 @@ type openAIOverLimitAccountRepoStub struct {
 	stubOpenAIAccountRepo
 }
 
+type productionLikeOpenAIOverLimitRepoStub struct {
+	stubOpenAIAccountRepo
+}
+
 func newOpenAIOverLimitSettingsRepoStub(enabled bool, cooldownSeconds int) *openAIOverLimitSettingsRepoStub {
 	return &openAIOverLimitSettingsRepoStub{
 		values: map[string]string{
@@ -92,6 +96,45 @@ func (r openAIOverLimitAccountRepoStub) ListByPlatform(ctx context.Context, plat
 func (r openAIOverLimitAccountRepoStub) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
 	var result []Account
 	result = append(result, r.accounts...)
+	return result, nil
+}
+
+func (r productionLikeOpenAIOverLimitRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	now := time.Now()
+	var result []Account
+	for _, acc := range r.accounts {
+		if acc.Platform != platform {
+			continue
+		}
+		if acc.RateLimitResetAt != nil && now.Before(*acc.RateLimitResetAt) {
+			continue
+		}
+		result = append(result, acc)
+	}
+	return result, nil
+}
+
+func (r productionLikeOpenAIOverLimitRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+func (r productionLikeOpenAIOverLimitRepoStub) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByPlatform(ctx, platform)
+}
+
+func (r productionLikeOpenAIOverLimitRepoStub) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
+	var result []Account
+	result = append(result, r.accounts...)
+	return result, nil
+}
+
+func (r productionLikeOpenAIOverLimitRepoStub) ListByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	var result []Account
+	for _, acc := range r.accounts {
+		if acc.Platform == platform {
+			result = append(result, acc)
+		}
+	}
 	return result, nil
 }
 
@@ -265,6 +308,114 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerAllows
 	require.NotNil(t, selection.Account)
 	require.Equal(t, primary.ID, selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerUsesBroadAccountListWhenOverLimitEnabled(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(51101)
+	rateLimitedUntil := time.Now().Add(30 * time.Minute)
+	primary := Account{
+		ID:               51101,
+		Platform:         PlatformOpenAI,
+		Type:             AccountTypeOAuth,
+		Status:           StatusActive,
+		Schedulable:      true,
+		Concurrency:      1,
+		Priority:         1,
+		RateLimitResetAt: &rateLimitedUntil,
+	}
+	backup := Account{
+		ID:          51102,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    11,
+	}
+
+	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		openAIAdvancedSchedulerSettingKey:        "true",
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+	})
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	svc := &OpenAIGatewayService{
+		accountRepo:        productionLikeOpenAIOverLimitRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{primary, backup}}},
+		cfg:                cfg,
+		rateLimitService:   &RateLimitService{settingService: settingService},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	svc.SetSettingService(settingService)
+
+	selection, _, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, primary.ID, selection.Account.ID)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadAccountListWhenOverLimitEnabled(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(51111)
+	rateLimitedUntil := time.Now().Add(30 * time.Minute)
+	primary := Account{
+		ID:               51111,
+		Platform:         PlatformOpenAI,
+		Type:             AccountTypeOAuth,
+		Status:           StatusActive,
+		Schedulable:      true,
+		Concurrency:      1,
+		Priority:         1,
+		RateLimitResetAt: &rateLimitedUntil,
+	}
+	backup := Account{
+		ID:          51112,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    11,
+	}
+
+	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		openAIAdvancedSchedulerSettingKey:        "false",
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+	})
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	svc := &OpenAIGatewayService{
+		accountRepo:        productionLikeOpenAIOverLimitRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{primary, backup}}},
+		cfg:                &config.Config{},
+		rateLimitService:   &RateLimitService{settingService: settingService},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	svc.SetSettingService(settingService)
+
+	selection, _, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, primary.ID, selection.Account.ID)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsActiveOpenAIOverLimitShortCooldown(t *testing.T) {
