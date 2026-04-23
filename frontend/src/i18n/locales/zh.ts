@@ -10,13 +10,13 @@ export default {
     login: '登录',
     getStarted: '立即开始',
     goToDashboard: '进入控制台',
-    heroSubtitle: '一个密钥，畅用多个 AI 模型',
+    heroSubtitle: 'AI API 网关',
     heroDescription:
-      '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
+      '原生直连 Claude、ChatGPT、Gemini 等主流模型，上游链路更长效稳定',
     tags: {
-      subscriptionToApi: '订阅转 API',
-      stickySession: '会话保持',
-      realtimeBilling: '按量计费'
+      subscriptionToApi: 'AI API 网关',
+      stickySession: '原生直连',
+      realtimeBilling: '长效稳定'
     },
     painPoints: {
       title: '你是否也遇到这些问题？',
