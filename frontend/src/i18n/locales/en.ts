@@ -10,13 +10,13 @@ export default {
     login: 'Login',
     getStarted: 'Get Started',
     goToDashboard: 'Go to Dashboard',
-    heroSubtitle: 'One Key, All AI Models',
+    heroSubtitle: 'AI API Gateway',
     heroDescription:
-      'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+      'Native direct access to Claude, ChatGPT, Gemini and more with long-term stable upstream connectivity',
     tags: {
-      subscriptionToApi: 'Subscription to API',
-      stickySession: 'Session Persistence',
-      realtimeBilling: 'Pay As You Go'
+      subscriptionToApi: 'AI API Gateway',
+      stickySession: 'Native Direct',
+      realtimeBilling: 'Long-Term Stable'
     },
     painPoints: {
       title: 'Sound Familiar?',
