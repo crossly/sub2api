@@ -91,9 +91,7 @@ func (r openAIOverLimitAccountRepoStub) ListByPlatform(ctx context.Context, plat
 
 func (r openAIOverLimitAccountRepoStub) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
 	var result []Account
-	for _, acc := range r.accounts {
-		result = append(result, acc)
-	}
+	result = append(result, r.accounts...)
 	return result, nil
 }
 
@@ -134,8 +132,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeAllo
 	}
 
 	svc := &OpenAIGatewayService{
-		accountRepo:       openAIOverLimitAccountRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}},
-		cfg:               &config.Config{},
+		accountRepo: openAIOverLimitAccountRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}},
+		cfg:         &config.Config{},
 		schedulerSnapshot: &SchedulerSnapshotService{cache: &openAISnapshotCacheStub{
 			snapshotAccounts: []*Account{&account},
 			accountsByID: map[int64]*Account{
@@ -238,7 +236,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerAllows
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
-		openAIAdvancedSchedulerSettingKey:       "true",
+		openAIAdvancedSchedulerSettingKey:        "true",
 		SettingKeyOpenAIOverLimitModeEnabled:     "true",
 		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
 	})
@@ -294,7 +292,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
-		openAIAdvancedSchedulerSettingKey:       "true",
+		openAIAdvancedSchedulerSettingKey:        "true",
 		SettingKeyOpenAIOverLimitModeEnabled:     "true",
 		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
 	})
