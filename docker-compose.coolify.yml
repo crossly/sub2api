@@ -4,20 +4,13 @@
 # Simplified from deploy/docker-compose.local.yml:
 # - Keep the same 3-service structure
 # - Use named volumes instead of local directories
-# - Build sub2api from the repository root Dockerfile
+# - Pull the prebuilt sub2api image from GHCR instead of building on the server
 # =============================================================================
 
 services:
   sub2api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${APP_VERSION:-}
-        COMMIT: ${APP_COMMIT:-coolify}
-        DATE: ${BUILD_DATE:-}
-        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
-        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+    image: ghcr.io/crossly/sub2api:latest
+    pull_policy: always
     restart: unless-stopped
     ulimits:
       nofile:
