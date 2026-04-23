@@ -652,6 +652,57 @@ func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, reque
 	return true
 }
 
+func (s *OpenAIGatewayService) shouldBypassStickySessionForOpenAIOverLimit(
+	ctx context.Context,
+	groupID *int64,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	stickyAccount *Account,
+) bool {
+	if s == nil || stickyAccount == nil {
+		return false
+	}
+
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !settings.Enabled {
+		return false
+	}
+
+	accounts, err := s.listOpenAIAccountsForOverLimitMode(ctx, groupID)
+	if err != nil || len(accounts) == 0 {
+		return false
+	}
+
+	now := time.Now()
+	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+	for i := range accounts {
+		candidate := &accounts[i]
+		if candidate.ID == stickyAccount.ID {
+			continue
+		}
+		if excludedIDs != nil {
+			if _, excluded := excludedIDs[candidate.ID]; excluded {
+				continue
+			}
+		}
+		if candidate.Priority >= stickyAccount.Priority {
+			continue
+		}
+		if candidate.RateLimitResetAt == nil || !now.Before(*candidate.RateLimitResetAt) {
+			continue
+		}
+		if !s.isOpenAIAccountSelectable(candidate, requestedModel, settings) {
+			continue
+		}
+		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, requestedModel) {
+			continue
+		}
+		return true
+	}
+
+	return false
+}
+
 func (s *OpenAIGatewayService) maybeMarkOpenAIOverLimitCooldown(ctx context.Context, account *Account, requestedModel string, statusCode int) {
 	if s == nil || account == nil || !account.IsOpenAI() {
 		return
@@ -1475,6 +1526,10 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
+	if s.shouldBypassStickySessionForOpenAIOverLimit(ctx, groupID, requestedModel, excludedIDs, account) {
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		return nil
+	}
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
@@ -1645,6 +1700,12 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		if accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getAccount(ctx, accountID)
 			if err == nil {
+				if s.shouldBypassStickySessionForOpenAIOverLimit(ctx, groupID, requestedModel, excludedIDs, account) {
+					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					account = nil
+				}
+			}
+			if account != nil && err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)

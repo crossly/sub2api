@@ -20,4 +20,11 @@ if [ "${1#-}" != "$1" ]; then
     set -- /app/sub2api "$@"
 fi
 
+if [ -n "${SUB2API_IMAGE_REF:-}" ]; then
+    echo "[startup] image=${SUB2API_IMAGE_REF}"
+fi
+if [ -x /app/sub2api ]; then
+    echo "[startup] version=$(/app/sub2api --version 2>/dev/null || echo unknown)"
+fi
+
 exec "$@"

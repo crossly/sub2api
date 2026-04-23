@@ -337,6 +337,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
+	if s.service.shouldBypassStickySessionForOpenAIOverLimit(ctx, req.GroupID, req.RequestedModel, req.ExcludedIDs, account) {
+		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		return nil, nil
+	}
 	settings := s.service.getOpenAIOverLimitModeSettings(ctx)
 	if !account.IsOpenAI() ||
 		!s.service.isOpenAIAccountSelectable(account, req.RequestedModel, settings) ||

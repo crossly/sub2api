@@ -19,6 +19,7 @@ services:
     volumes:
       - sub2api_data:/app/data
     environment:
+      - SUB2API_IMAGE_REF=${SUB2API_IMAGE_REF:-ghcr.io/crossly/sub2api:latest}
       - AUTO_SETUP=${AUTO_SETUP:-true}
       - SERVER_MODE=${SERVER_MODE:-release}
       - RUN_MODE=${RUN_MODE:-standard}

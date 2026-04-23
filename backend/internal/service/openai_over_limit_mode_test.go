@@ -418,6 +418,84 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadA
 	require.Equal(t, primary.ID, selection.Account.ID)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesStickyFallbackAccount(t *testing.T) {
+	testCases := []struct {
+		name              string
+		advancedScheduler bool
+	}{
+		{
+			name:              "load awareness",
+			advancedScheduler: false,
+		},
+		{
+			name:              "advanced scheduler",
+			advancedScheduler: true,
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			groupID := int64(51121)
+			rateLimitedUntil := time.Now().Add(30 * time.Minute)
+			primary := Account{
+				ID:               51121,
+				Platform:         PlatformOpenAI,
+				Type:             AccountTypeOAuth,
+				Status:           StatusActive,
+				Schedulable:      true,
+				Concurrency:      1,
+				Priority:         1,
+				RateLimitResetAt: &rateLimitedUntil,
+			}
+			backup := Account{
+				ID:          51122,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    11,
+			}
+
+			settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+				openAIAdvancedSchedulerSettingKey:        strconv.FormatBool(tt.advancedScheduler),
+				SettingKeyOpenAIOverLimitModeEnabled:     "true",
+				SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+			})
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+			cache := &schedulerTestGatewayCache{
+				sessionBindings: map[string]int64{
+					"openai:session_hash_over_limit_backup": backup.ID,
+				},
+			}
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{primary, backup}},
+				cache:              cache,
+				cfg:                &config.Config{},
+				rateLimitService:   &RateLimitService{settingService: settingService},
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			svc.SetSettingService(settingService)
+
+			selection, _, err := svc.SelectAccountWithScheduler(
+				ctx,
+				&groupID,
+				"",
+				"session_hash_over_limit_backup",
+				"gpt-5.1",
+				nil,
+				OpenAIUpstreamTransportAny,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.Account)
+			require.Equal(t, primary.ID, selection.Account.ID)
+		})
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsActiveOpenAIOverLimitShortCooldown(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(52001)
