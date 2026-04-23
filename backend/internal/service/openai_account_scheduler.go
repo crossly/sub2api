@@ -337,7 +337,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
-	if shouldClearStickySession(account, req.RequestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
+	settings := s.service.getOpenAIOverLimitModeSettings(ctx)
+	if !account.IsOpenAI() ||
+		!s.service.isOpenAIAccountSelectable(account, req.RequestedModel, settings) ||
+		account.GetRateLimitRemainingTimeWithContext(context.Background(), req.RequestedModel) > 0 {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
@@ -601,6 +604,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 
 	filtered := make([]*Account, 0, len(accounts))
 	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
+	settings := s.service.getOpenAIOverLimitModeSettings(ctx)
 	for i := range accounts {
 		account := &accounts[i]
 		if req.ExcludedIDs != nil {
@@ -608,7 +612,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				continue
 			}
 		}
-		if !account.IsSchedulable() || !account.IsOpenAI() {
+		if !account.IsOpenAI() || !s.service.isOpenAIAccountSelectable(account, req.RequestedModel, settings) {
+			continue
+		}
+		if account.GetRateLimitRemainingTimeWithContext(context.Background(), req.RequestedModel) > 0 {
 			continue
 		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常

@@ -5328,6 +5328,12 @@ export default {
         title: 'OpenAI 实验调度策略',
         description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。'
       },
+      openaiOverLimitMode: {
+        title: 'OpenAI 超限模式',
+        description: '允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。',
+        cooldownSeconds: '短冷却（秒）',
+        cooldownSecondsHint: '429/529 后该账号暂不再被立即复用；冷却结束后，仍可在账号级限流窗口内继续参与调度（1-300 秒）。'
+      },
       saveSettings: '保存设置',
       saving: '保存中...',
       settingsSaved: '设置保存成功',

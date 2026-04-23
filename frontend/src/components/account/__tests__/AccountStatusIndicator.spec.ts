@@ -3,6 +3,20 @@ import { mount } from '@vue/test-utils'
 import AccountStatusIndicator from '../AccountStatusIndicator.vue'
 import type { Account } from '@/types'
 
+vi.hoisted(() => {
+  const storage = {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  }
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: storage,
+    configurable: true,
+  })
+  return storage
+})
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -122,7 +136,7 @@ describe('AccountStatusIndicator', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('account.creditsExhausted')
+    expect(wrapper.text()).toContain('admin.accounts.status.creditsExhausted')
   })
 
   it('模型限流 + overages 启用 + AICredits key 生效 → 普通限流样式（积分耗尽，无 ⚡）', () => {
@@ -157,6 +171,6 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).toContain('CSon45')
     expect(wrapper.text()).not.toContain('⚡')
     // AICredits 积分耗尽状态应显示
-    expect(wrapper.text()).toContain('account.creditsExhausted')
+    expect(wrapper.text()).toContain('admin.accounts.status.creditsExhausted')
   })
 })

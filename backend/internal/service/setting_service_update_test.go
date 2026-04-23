@@ -243,6 +243,31 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "true", repo.updates[openAIAdvancedSchedulerSettingKey])
 }
 
+func TestSettingService_UpdateSettings_OpenAIOverLimitMode(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAIOverLimitModeEnabled:     true,
+		OpenAIOverLimitCooldownSeconds: 45,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIOverLimitModeEnabled])
+	require.Equal(t, "45", repo.updates[SettingKeyOpenAIOverLimitCooldownSeconds])
+}
+
+func TestParseSettings_OpenAIOverLimitMode(t *testing.T) {
+	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+
+	got := svc.parseSettings(map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "30",
+	})
+
+	require.True(t, got.OpenAIOverLimitModeEnabled)
+	require.Equal(t, 30, got.OpenAIOverLimitCooldownSeconds)
+}
+
 func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

@@ -5167,6 +5167,12 @@ export default {
         title: 'OpenAI experimental scheduler policy',
         description: "Disabled by default. When enabled, this only changes the gateway's experimental account-selection policy for OpenAI traffic; it does not indicate an upstream OpenAI capability."
       },
+      openaiOverLimitMode: {
+        title: 'OpenAI over-limit mode',
+        description: 'Allows OpenAI accounts to enter a short cooldown after upstream 429/529 responses, then continue participating in later scheduling attempts during the account-level rate-limit window.',
+        cooldownSeconds: 'Short cooldown (seconds)',
+        cooldownSecondsHint: 'Prevents the same account from being retried immediately after 429/529; once the cooldown ends, it can rejoin scheduling during the account-level rate-limit window (1-300 seconds).'
+      },
       saveSettings: 'Save Settings',
       saving: 'Saving...',
       settingsSaved: 'Settings saved successfully',

@@ -211,6 +211,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentVisibleMethodAlipayEnabled:      settings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:       settings.PaymentVisibleMethodWxpayEnabled,
 		OpenAIAdvancedSchedulerEnabled:         settings.OpenAIAdvancedSchedulerEnabled,
+		OpenAIOverLimitModeEnabled:             settings.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:         settings.OpenAIOverLimitCooldownSeconds,
 		BalanceLowNotifyEnabled:                settings.BalanceLowNotifyEnabled,
 		BalanceLowNotifyThreshold:              settings.BalanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:            settings.BalanceLowNotifyRechargeURL,
@@ -396,6 +398,8 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI account scheduling
 	OpenAIAdvancedSchedulerEnabled *bool `json:"openai_advanced_scheduler_enabled"`
+	OpenAIOverLimitModeEnabled     *bool `json:"openai_over_limit_mode_enabled"`
+	OpenAIOverLimitCooldownSeconds *int  `json:"openai_over_limit_cooldown_seconds"`
 
 	// Balance low notification
 	BalanceLowNotifyEnabled     *bool                   `json:"balance_low_notify_enabled"`
@@ -1192,6 +1196,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIAdvancedSchedulerEnabled
 		}(),
+		OpenAIOverLimitModeEnabled: func() bool {
+			if req.OpenAIOverLimitModeEnabled != nil {
+				return *req.OpenAIOverLimitModeEnabled
+			}
+			return previousSettings.OpenAIOverLimitModeEnabled
+		}(),
+		OpenAIOverLimitCooldownSeconds: func() int {
+			if req.OpenAIOverLimitCooldownSeconds != nil {
+				return *req.OpenAIOverLimitCooldownSeconds
+			}
+			return previousSettings.OpenAIOverLimitCooldownSeconds
+		}(),
 		BalanceLowNotifyEnabled: func() bool {
 			if req.BalanceLowNotifyEnabled != nil {
 				return *req.BalanceLowNotifyEnabled
@@ -1428,6 +1444,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodAlipayEnabled:      updatedSettings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:       updatedSettings.PaymentVisibleMethodWxpayEnabled,
 		OpenAIAdvancedSchedulerEnabled:         updatedSettings.OpenAIAdvancedSchedulerEnabled,
+		OpenAIOverLimitModeEnabled:             updatedSettings.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:         updatedSettings.OpenAIOverLimitCooldownSeconds,
 		BalanceLowNotifyEnabled:                updatedSettings.BalanceLowNotifyEnabled,
 		BalanceLowNotifyThreshold:              updatedSettings.BalanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:            updatedSettings.BalanceLowNotifyRechargeURL,
@@ -1792,6 +1810,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAIAdvancedSchedulerEnabled != after.OpenAIAdvancedSchedulerEnabled {
 		changed = append(changed, "openai_advanced_scheduler_enabled")
+	}
+	if before.OpenAIOverLimitModeEnabled != after.OpenAIOverLimitModeEnabled {
+		changed = append(changed, "openai_over_limit_mode_enabled")
+	}
+	if before.OpenAIOverLimitCooldownSeconds != after.OpenAIOverLimitCooldownSeconds {
+		changed = append(changed, "openai_over_limit_cooldown_seconds")
 	}
 	// Balance & quota notification
 	if before.BalanceLowNotifyEnabled != after.BalanceLowNotifyEnabled {

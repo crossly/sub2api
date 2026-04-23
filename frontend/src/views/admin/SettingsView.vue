@@ -2704,6 +2704,51 @@
                 </div>
                 <Toggle v-model="form.openai_advanced_scheduler_enabled" />
               </div>
+
+              <div class="border-t border-gray-100 pt-5 dark:border-dark-700">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.openaiOverLimitMode.title") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.openaiOverLimitMode.description") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_over_limit_mode_enabled" />
+                </div>
+
+                <div
+                  v-if="form.openai_over_limit_mode_enabled"
+                  class="mt-4 space-y-2"
+                >
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.openaiOverLimitMode.cooldownSeconds",
+                      )
+                    }}
+                  </label>
+                  <input
+                    v-model.number="form.openai_over_limit_cooldown_seconds"
+                    type="number"
+                    min="1"
+                    max="300"
+                    class="input w-32"
+                  />
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.openaiOverLimitMode.cooldownSecondsHint",
+                      )
+                    }}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -4870,6 +4915,8 @@ type SettingsForm = Omit<
   oidc_connect_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  openai_over_limit_mode_enabled: boolean;
+  openai_over_limit_cooldown_seconds: number;
 };
 
 const form = reactive<SettingsForm>({
@@ -5014,6 +5061,8 @@ const form = reactive<SettingsForm>({
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
+  openai_over_limit_mode_enabled: false,
+  openai_over_limit_cooldown_seconds: 10,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -5922,6 +5971,9 @@ async function saveSettings() {
       payment_cancel_rate_limit_window_mode:
         form.payment_cancel_rate_limit_window_mode,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
+      openai_over_limit_mode_enabled: form.openai_over_limit_mode_enabled,
+      openai_over_limit_cooldown_seconds:
+        Number(form.openai_over_limit_cooldown_seconds) || 0,
       // Balance & quota notification
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:

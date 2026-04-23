@@ -153,6 +153,8 @@ type SystemSettings struct {
 
 	// OpenAI account scheduling
 	OpenAIAdvancedSchedulerEnabled bool `json:"openai_advanced_scheduler_enabled"`
+	OpenAIOverLimitModeEnabled     bool `json:"openai_over_limit_mode_enabled"`
+	OpenAIOverLimitCooldownSeconds int  `json:"openai_over_limit_cooldown_seconds"`
 
 	// Payment configuration
 	PaymentEnabled                   bool     `json:"payment_enabled"`

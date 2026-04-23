@@ -1105,6 +1105,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
+	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
+	if settings.OpenAIOverLimitCooldownSeconds > 0 {
+		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(settings.OpenAIOverLimitCooldownSeconds)
+	} else {
+		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = ""
+	}
 
 	// Balance low notification
 	updates[SettingKeyBalanceLowNotifyEnabled] = strconv.FormatBool(settings.BalanceLowNotifyEnabled)
@@ -1978,6 +1984,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
+	result.OpenAIOverLimitModeEnabled = settings[SettingKeyOpenAIOverLimitModeEnabled] == "true"
+	if v, err := strconv.Atoi(strings.TrimSpace(settings[SettingKeyOpenAIOverLimitCooldownSeconds])); err == nil && v > 0 {
+		result.OpenAIOverLimitCooldownSeconds = v
+	}
 
 	// Balance low notification
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"

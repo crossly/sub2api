@@ -635,6 +635,23 @@ func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, reque
 	return true
 }
 
+func (s *OpenAIGatewayService) maybeMarkOpenAIOverLimitCooldown(ctx context.Context, account *Account, requestedModel string, statusCode int) {
+	if s == nil || account == nil || !account.IsOpenAI() {
+		return
+	}
+	switch statusCode {
+	case http.StatusTooManyRequests, 529:
+	default:
+		return
+	}
+
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !settings.Enabled || settings.CooldownSeconds <= 0 {
+		return
+	}
+	s.markOpenAIOverLimitCooldown(account.ID, requestedModel, time.Duration(settings.CooldownSeconds)*time.Second)
+}
+
 func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 	return &billingDeps{
 		accountRepo:          s.accountRepo,
@@ -1959,7 +1976,10 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+	if s.rateLimitService != nil {
+		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+	}
+	s.maybeMarkOpenAIOverLimitCooldown(ctx, account, "", resp.StatusCode)
 }
 
 // Forward forwards request to OpenAI API
@@ -2976,6 +2996,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	if s.rateLimitService != nil {
 		_ = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	}
+	s.maybeMarkOpenAIOverLimitCooldown(ctx, account, "", resp.StatusCode)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:             account.Platform,
 		AccountID:            account.ID,
@@ -3022,6 +3043,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		// reusing a freshly rate-limited account.
 		_ = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	}
+	s.maybeMarkOpenAIOverLimitCooldown(ctx, account, "", resp.StatusCode)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:             account.Platform,
 		AccountID:            account.ID,
@@ -3518,6 +3540,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	if s.rateLimitService != nil {
 		shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	}
+	s.maybeMarkOpenAIOverLimitCooldown(ctx, account, "", resp.StatusCode)
 	kind := "http_error"
 	if shouldDisable {
 		kind = "failover"

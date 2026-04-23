@@ -4,6 +4,20 @@ import { flushPromises, mount } from "@vue/test-utils";
 
 import SettingsView from "../SettingsView.vue";
 
+vi.hoisted(() => {
+  const storage = {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    value: storage,
+    configurable: true,
+  });
+  return storage;
+});
+
 const {
   getSettings,
   updateSettings,
@@ -155,6 +169,10 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.payment.findProvider": "查看支持的支付方式",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.openaiOverLimitMode.title": "OpenAI 超限模式",
+    "admin.settings.openaiOverLimitMode.description": "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
+    "admin.settings.openaiOverLimitMode.cooldownSeconds": "短冷却（秒）",
+    "admin.settings.openaiOverLimitMode.cooldownSecondsHint": "429/529 后该账号暂不再被立即复用；冷却结束后，仍可在账号级限流窗口内继续参与调度（1-300 秒）。",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
   };
@@ -640,6 +658,18 @@ describe("admin SettingsView payment visible method controls", () => {
       "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
     );
     expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+  });
+
+  it("renders dedicated OpenAI over-limit mode copy distinct from 529 overload cooldown", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("OpenAI 超限模式");
+    expect(wrapper.text()).toContain(
+      "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
+    );
+    expect(wrapper.text()).not.toContain("529 过载冷却");
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {

@@ -152,6 +152,8 @@ type SystemSettings struct {
 
 	// OpenAI account scheduling
 	OpenAIAdvancedSchedulerEnabled bool
+	OpenAIOverLimitModeEnabled     bool
+	OpenAIOverLimitCooldownSeconds int
 
 	// Balance low notification
 	BalanceLowNotifyEnabled     bool
