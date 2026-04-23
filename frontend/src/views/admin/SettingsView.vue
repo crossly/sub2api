@@ -2736,7 +2736,7 @@
                   <input
                     v-model.number="form.openai_over_limit_cooldown_seconds"
                     type="number"
-                    min="1"
+                    min="10"
                     max="300"
                     class="input w-32"
                   />

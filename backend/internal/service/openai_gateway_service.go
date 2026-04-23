@@ -286,10 +286,26 @@ type cachedOpenAIOverLimitModeSettings struct {
 const (
 	openAIOverLimitSettingsCacheTTL  = 5 * time.Second
 	openAIOverLimitSettingsDBTimeout = 2 * time.Second
+	minOpenAIOverLimitCooldownSeconds = 10
 )
 
 var openAIOverLimitSettingsCache atomic.Value // *cachedOpenAIOverLimitModeSettings
 var openAIOverLimitSettingsSF singleflight.Group
+
+func normalizeOpenAIOverLimitCooldownSeconds(enabled bool, cooldown int) int {
+	if !enabled {
+		return cooldown
+	}
+	if cooldown < minOpenAIOverLimitCooldownSeconds {
+		return minOpenAIOverLimitCooldownSeconds
+	}
+	return cooldown
+}
+
+func normalizeOpenAIOverLimitModeSettings(settings openAIOverLimitModeSettings) openAIOverLimitModeSettings {
+	settings.CooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(settings.Enabled, settings.CooldownSeconds)
+	return settings
+}
 
 func newAccountWriteThrottle(minInterval time.Duration) *accountWriteThrottle {
 	return &accountWriteThrottle{
@@ -536,22 +552,23 @@ func (s *OpenAIGatewayService) getOpenAIOverLimitModeSettings(ctx context.Contex
 		}
 
 		settings := openAIOverLimitModeSettings{}
-		if repo := s.openAIOverLimitSettingRepo(); repo != nil {
+			if repo := s.openAIOverLimitSettingRepo(); repo != nil {
 			dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIOverLimitSettingsDBTimeout)
 			defer cancel()
 
 			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitModeEnabled); err == nil {
 				settings.Enabled = strings.EqualFold(strings.TrimSpace(value), "true")
 			}
-			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitCooldownSeconds); err == nil {
-				if seconds, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil && seconds > 0 {
-					settings.CooldownSeconds = seconds
+				if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitCooldownSeconds); err == nil {
+					if seconds, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil && seconds > 0 {
+						settings.CooldownSeconds = seconds
+					}
 				}
 			}
-		}
+			settings = normalizeOpenAIOverLimitModeSettings(settings)
 
-		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitModeSettings{
-			settings:  settings,
+			openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitModeSettings{
+				settings:  settings,
 			expiresAt: time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
 		})
 		return settings, nil
@@ -3673,12 +3690,13 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 	// Track rate limits and decide whether to trigger secondary failover.
 	shouldDisable := false
-	if s.rateLimitService != nil {
-		shouldDisable = s.rateLimitService.HandleUpstreamError(
-			c.Request.Context(), account, resp.StatusCode, resp.Header, body,
-		)
-	}
-	kind := "http_error"
+		if s.rateLimitService != nil {
+			shouldDisable = s.rateLimitService.HandleUpstreamError(
+				c.Request.Context(), account, resp.StatusCode, resp.Header, body,
+			)
+		}
+		s.maybeMarkOpenAIOverLimitCooldown(c.Request.Context(), account, "", resp.StatusCode)
+		kind := "http_error"
 	if shouldDisable {
 		kind = "failover"
 	}

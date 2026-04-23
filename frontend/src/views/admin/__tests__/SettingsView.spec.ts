@@ -172,7 +172,7 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiOverLimitMode.title": "OpenAI 超限模式",
     "admin.settings.openaiOverLimitMode.description": "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
     "admin.settings.openaiOverLimitMode.cooldownSeconds": "短冷却（秒）",
-    "admin.settings.openaiOverLimitMode.cooldownSecondsHint": "429/529 后该账号暂不再被立即复用；冷却结束后，仍可在账号级限流窗口内继续参与调度（1-300 秒）。",
+    "admin.settings.openaiOverLimitMode.cooldownSecondsHint": "429/529 后该账号暂不再被立即复用；开启超限模式时，空值或小于 10 秒都会按 10 秒兜底；冷却结束后，仍可在账号级限流窗口内继续参与调度（10-300 秒）。",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
   };

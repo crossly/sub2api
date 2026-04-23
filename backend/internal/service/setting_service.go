@@ -1106,8 +1106,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
-	if settings.OpenAIOverLimitCooldownSeconds > 0 {
-		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(settings.OpenAIOverLimitCooldownSeconds)
+	openAIOverLimitCooldownSeconds := normalizeOpenAIOverLimitCooldownSeconds(
+		settings.OpenAIOverLimitModeEnabled,
+		settings.OpenAIOverLimitCooldownSeconds,
+	)
+	if openAIOverLimitCooldownSeconds > 0 {
+		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(openAIOverLimitCooldownSeconds)
 	} else {
 		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = ""
 	}
@@ -1988,6 +1992,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	if v, err := strconv.Atoi(strings.TrimSpace(settings[SettingKeyOpenAIOverLimitCooldownSeconds])); err == nil && v > 0 {
 		result.OpenAIOverLimitCooldownSeconds = v
 	}
+	result.OpenAIOverLimitCooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(
+		result.OpenAIOverLimitModeEnabled,
+		result.OpenAIOverLimitCooldownSeconds,
+	)
 
 	// Balance low notification
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"

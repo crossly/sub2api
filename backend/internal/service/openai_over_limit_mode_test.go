@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -348,5 +350,77 @@ func TestOpenAIGatewayService_HandleFailoverSideEffects_MarksOpenAIOverLimitCool
 
 	svc.handleFailoverSideEffects(ctx, resp, account)
 
+	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "", time.Now()))
+}
+
+func TestOpenAIGatewayService_GetOpenAIOverLimitModeSettings_NormalizesCooldownToTenWhenEnabled(t *testing.T) {
+	testCases := []struct {
+		name   string
+		values map[string]string
+	}{
+		{
+			name: "missing cooldown",
+			values: map[string]string{
+				SettingKeyOpenAIOverLimitModeEnabled: "true",
+			},
+		},
+		{
+			name: "small cooldown",
+			values: map[string]string{
+				SettingKeyOpenAIOverLimitModeEnabled:     "true",
+				SettingKeyOpenAIOverLimitCooldownSeconds: "5",
+			},
+		},
+		{
+			name: "empty cooldown",
+			values: map[string]string{
+				SettingKeyOpenAIOverLimitModeEnabled:     "true",
+				SettingKeyOpenAIOverLimitCooldownSeconds: "",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, tc.values))
+
+			settings := svc.getOpenAIOverLimitModeSettings(context.Background())
+
+			require.True(t, settings.Enabled)
+			require.Equal(t, 10, settings.CooldownSeconds)
+		})
+	}
+}
+
+func TestOpenAIGatewayService_HandleCompatErrorResponse_MarksOpenAIOverLimitCooldown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	account := &Account{
+		ID:          54001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
+	}))
+
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+	}
+
+	_, err := svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
+
+	require.Error(t, err)
 	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "", time.Now()))
 }

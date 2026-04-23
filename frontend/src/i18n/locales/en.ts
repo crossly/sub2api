@@ -5171,7 +5171,7 @@ export default {
         title: 'OpenAI over-limit mode',
         description: 'Allows OpenAI accounts to enter a short cooldown after upstream 429/529 responses, then continue participating in later scheduling attempts during the account-level rate-limit window.',
         cooldownSeconds: 'Short cooldown (seconds)',
-        cooldownSecondsHint: 'Prevents the same account from being retried immediately after 429/529; once the cooldown ends, it can rejoin scheduling during the account-level rate-limit window (1-300 seconds).'
+        cooldownSecondsHint: 'Prevents the same account from being retried immediately after 429/529; when over-limit mode is enabled, empty values or values below 10 seconds fall back to 10 seconds; once the cooldown ends, it can rejoin scheduling during the account-level rate-limit window (10-300 seconds).'
       },
       saveSettings: 'Save Settings',
       saving: 'Saving...',

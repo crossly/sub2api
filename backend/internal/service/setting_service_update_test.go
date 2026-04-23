@@ -256,6 +256,19 @@ func TestSettingService_UpdateSettings_OpenAIOverLimitMode(t *testing.T) {
 	require.Equal(t, "45", repo.updates[SettingKeyOpenAIOverLimitCooldownSeconds])
 }
 
+func TestSettingService_UpdateSettings_OpenAIOverLimitMode_NormalizesCooldownToTenWhenEnabled(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAIOverLimitModeEnabled:     true,
+		OpenAIOverLimitCooldownSeconds: 5,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIOverLimitModeEnabled])
+	require.Equal(t, "10", repo.updates[SettingKeyOpenAIOverLimitCooldownSeconds])
+}
+
 func TestParseSettings_OpenAIOverLimitMode(t *testing.T) {
 	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
 
@@ -266,6 +279,23 @@ func TestParseSettings_OpenAIOverLimitMode(t *testing.T) {
 
 	require.True(t, got.OpenAIOverLimitModeEnabled)
 	require.Equal(t, 30, got.OpenAIOverLimitCooldownSeconds)
+}
+
+func TestParseSettings_OpenAIOverLimitMode_NormalizesCooldownToTenWhenEnabled(t *testing.T) {
+	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+
+	gotSmall := svc.parseSettings(map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "5",
+	})
+	require.True(t, gotSmall.OpenAIOverLimitModeEnabled)
+	require.Equal(t, 10, gotSmall.OpenAIOverLimitCooldownSeconds)
+
+	gotMissing := svc.parseSettings(map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled: "true",
+	})
+	require.True(t, gotMissing.OpenAIOverLimitModeEnabled)
+	require.Equal(t, 10, gotMissing.OpenAIOverLimitCooldownSeconds)
 }
 
 func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(t *testing.T) {
