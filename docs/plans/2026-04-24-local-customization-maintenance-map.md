@@ -6,10 +6,12 @@
 
 ## Branch Notes
 
+- `codex/local-customizations` is the canonical branch for non-overlimit local customizations.
+- It intentionally carries the local logo/favicon, purple theme, homepage hero changes, responsive shell tweaks, email branding, Docker build tuning, and Coolify deployment customizations.
 - `codex/overlimit-only` exists as the logical branch for the isolated over-limit strategy work.
 - As of 2026-04-24, `main` and `codex/overlimit-only` both point to `22f0ea25`.
 - This is still usable for future merges, but treat `codex/overlimit-only` as a long-lived maintenance branch and avoid deleting or force-moving it.
-- If a future merge needs a stricter upstream-only patch branch, cut a fresh branch from upstream tag `a22a5b9e` (or the new upstream release tag) and cherry-pick only the over-limit commits.
+- If a future merge needs a stricter upstream-only patch branch, cut a fresh branch from the new upstream release tag and cherry-pick only the over-limit commits onto `codex/overlimit-only`, and only the branding/deploy/UI commits onto `codex/local-customizations`.
 
 ## Review Findings
 
