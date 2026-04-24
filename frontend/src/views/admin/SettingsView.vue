@@ -2705,50 +2705,10 @@
                 <Toggle v-model="form.openai_advanced_scheduler_enabled" />
               </div>
 
-              <div class="border-t border-gray-100 pt-5 dark:border-dark-700">
-                <div class="flex items-center justify-between">
-                  <div>
-                    <label
-                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      {{ t("admin.settings.openaiOverLimitMode.title") }}
-                    </label>
-                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.openaiOverLimitMode.description") }}
-                    </p>
-                  </div>
-                  <Toggle v-model="form.openai_over_limit_mode_enabled" />
-                </div>
-
-                <div
-                  v-if="form.openai_over_limit_mode_enabled"
-                  class="mt-4 space-y-2"
-                >
-                  <label
-                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >
-                    {{
-                      t(
-                        "admin.settings.openaiOverLimitMode.cooldownSeconds",
-                      )
-                    }}
-                  </label>
-                  <input
-                    v-model.number="form.openai_over_limit_cooldown_seconds"
-                    type="number"
-                    min="10"
-                    max="300"
-                    class="input w-32"
-                  />
-                  <p class="text-xs text-gray-500 dark:text-gray-400">
-                    {{
-                      t(
-                        "admin.settings.openaiOverLimitMode.cooldownSecondsHint",
-                      )
-                    }}
-                  </p>
-                </div>
-              </div>
+              <OpenAIOverLimitSection
+                :form="form"
+                @update:field="updateOpenAIOverLimitField"
+              />
             </div>
           </div>
 
@@ -2765,7 +2725,6 @@
               </p>
             </div>
             <div class="space-y-5 p-6">
-              <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
                   <label
@@ -2788,7 +2747,6 @@
                 <Toggle v-model="form.enable_fingerprint_unification" />
               </div>
 
-              <!-- Metadata Passthrough -->
               <div class="flex items-center justify-between">
                 <div>
                   <label
@@ -2809,7 +2767,6 @@
                 <Toggle v-model="form.enable_metadata_passthrough" />
               </div>
 
-              <!-- CCH Signing -->
               <div class="flex items-center justify-between">
                 <div>
                   <label
@@ -4766,6 +4723,7 @@ import Toggle from "@/components/common/Toggle.vue";
 import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
+import OpenAIOverLimitSection from "@/views/admin/settings/OpenAIOverLimitSection.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore } from "@/stores";
@@ -4777,6 +4735,15 @@ import {
   normalizeRegistrationEmailSuffixDomains,
   parseRegistrationEmailSuffixWhitelistInput,
 } from "@/utils/registrationEmailPolicy";
+import {
+  OPENAI_OVER_LIMIT_DEFAULTS,
+  type OpenAIOverLimitFieldKey,
+  type OpenAIOverLimitSettingsForm,
+} from "@/views/admin/settings/openaiOverLimitFields";
+import {
+  applyOpenAIOverLimitSettingsToForm,
+  useOpenAIOverLimitSettings,
+} from "@/views/admin/settings/useOpenAIOverLimitSettings";
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
@@ -4915,9 +4882,7 @@ type SettingsForm = Omit<
   oidc_connect_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
-  openai_over_limit_mode_enabled: boolean;
-  openai_over_limit_cooldown_seconds: number;
-};
+} & OpenAIOverLimitSettingsForm;
 
 const form = reactive<SettingsForm>({
   registration_enabled: true,
@@ -5061,8 +5026,7 @@ const form = reactive<SettingsForm>({
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
-  openai_over_limit_mode_enabled: false,
-  openai_over_limit_cooldown_seconds: 10,
+  ...OPENAI_OVER_LIMIT_DEFAULTS,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -5078,6 +5042,15 @@ const form = reactive<SettingsForm>({
 const authSourceDefaults = reactive<AuthSourceDefaultsState>(
   buildAuthSourceDefaultsState({}),
 );
+const { buildOpenAIOverLimitUpdateRequest } = useOpenAIOverLimitSettings(form);
+
+function updateOpenAIOverLimitField(
+  key: OpenAIOverLimitFieldKey,
+  value: boolean | number,
+) {
+  (form as unknown as Record<OpenAIOverLimitFieldKey, boolean | number>)[key] =
+    value;
+}
 
 const authSourceDefaultsMeta = computed(() => [
   {
@@ -5578,6 +5551,7 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    applyOpenAIOverLimitSettingsToForm(form, settings);
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(settings));
     form.backend_mode_enabled = settings.backend_mode_enabled;
     form.default_subscriptions = normalizeDefaultSubscriptionSettings(
@@ -5971,9 +5945,7 @@ async function saveSettings() {
       payment_cancel_rate_limit_window_mode:
         form.payment_cancel_rate_limit_window_mode,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
-      openai_over_limit_mode_enabled: form.openai_over_limit_mode_enabled,
-      openai_over_limit_cooldown_seconds:
-        Number(form.openai_over_limit_cooldown_seconds) || 0,
+      ...buildOpenAIOverLimitUpdateRequest(),
       // Balance & quota notification
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:
@@ -5994,6 +5966,7 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    applyOpenAIOverLimitSettingsToForm(form, updated);
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(

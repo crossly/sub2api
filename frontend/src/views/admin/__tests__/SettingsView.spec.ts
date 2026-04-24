@@ -463,6 +463,16 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
   await flushPromises();
 }
 
+async function openGatewayTab(wrapper: ReturnType<typeof mountView>) {
+  const gatewayTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.gateway"));
+
+  expect(gatewayTabButton).toBeDefined();
+  await gatewayTabButton?.trigger("click");
+  await flushPromises();
+}
+
 describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
     getSettings.mockReset();
@@ -670,6 +680,69 @@ describe("admin SettingsView payment visible method controls", () => {
       "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
     );
     expect(wrapper.text()).not.toContain("529 过载冷却");
+  });
+
+  it("normalizes the OpenAI over-limit cooldown to 10 when enabled settings load with 0", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_over_limit_mode_enabled: true,
+      openai_over_limit_cooldown_seconds: 0,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const openaiPolicyCard = wrapper
+      .findAll(".card")
+      .find((node) => node.text().includes("OpenAI 超限模式"));
+
+    expect(openaiPolicyCard).toBeDefined();
+
+    const cooldownInput = openaiPolicyCard?.find('input[type="number"]');
+
+    expect(cooldownInput?.exists()).toBe(true);
+    expect((cooldownInput?.element as HTMLInputElement).value).toBe("10");
+  });
+
+  it("submits a normalized OpenAI over-limit cooldown of 10 when the mode is turned on from an empty value", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_over_limit_mode_enabled: false,
+      openai_over_limit_cooldown_seconds: 0,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const openaiPolicyCard = wrapper
+      .findAll(".card")
+      .find((node) => node.text().includes("OpenAI 超限模式"));
+
+    expect(openaiPolicyCard).toBeDefined();
+
+    const toggles = openaiPolicyCard?.findAll(".toggle-stub") ?? [];
+
+    expect(toggles.length).toBeGreaterThanOrEqual(3);
+    await toggles[toggles.length - 1]?.setValue(true);
+    await flushPromises();
+
+    const cooldownInput = openaiPolicyCard?.find('input[type="number"]');
+
+    expect(cooldownInput?.exists()).toBe(true);
+    expect((cooldownInput?.element as HTMLInputElement).value).toBe("10");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({
+      openai_over_limit_mode_enabled: true,
+      openai_over_limit_cooldown_seconds: 10,
+    });
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {
