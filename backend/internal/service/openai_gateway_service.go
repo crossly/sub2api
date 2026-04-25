@@ -1311,21 +1311,6 @@ func openAICompactSupportTier(account *Account) int {
 	return 0
 }
 
-// isOpenAIAccountEligibleForRequest centralises the schedulable / OpenAI / model /
-// compact-support checks used during account selection.
-func isOpenAIAccountEligibleForRequest(account *Account, requestedModel string, requireCompact bool) bool {
-	if account == nil || !account.IsSchedulable() || !account.IsOpenAI() {
-		return false
-	}
-	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
-		return false
-	}
-	if requireCompact && openAICompactSupportTier(account) == 0 {
-		return false
-	}
-	return true
-}
-
 // prioritizeOpenAICompactAccounts re-orders a slice so that accounts with known
 // compact support are tried first, followed by unknown, then explicitly unsupported.
 // The relative order within each tier is preserved.
