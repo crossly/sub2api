@@ -227,6 +227,7 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 	requestedModel string,
 	excludedIDs map[int64]struct{},
 	stickyAccount *Account,
+	requireCompact bool,
 ) bool {
 	if st.service == nil || stickyAccount == nil {
 		return false
@@ -263,7 +264,10 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 		if !st.IsAccountSelectable(candidate, requestedModel, settings) {
 			continue
 		}
-		if needsUpstreamCheck && st.service.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, requestedModel) {
+		if requireCompact && openAICompactSupportTier(candidate) == 0 {
+			continue
+		}
+		if needsUpstreamCheck && st.service.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, requestedModel, requireCompact) {
 			continue
 		}
 		return true

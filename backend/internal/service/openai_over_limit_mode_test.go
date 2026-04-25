@@ -195,6 +195,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeAllo
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -224,7 +225,7 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_OpenAIOverLimit
 	}
 	svc.SetSettingService(newOpenAIOverLimitSettingServiceForTest(t, true, 10))
 
-	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, "gpt-5.1")
+	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, "gpt-5.1", false)
 	require.NotNil(t, got)
 	require.Equal(t, dbAccount.ID, got.ID)
 }
@@ -303,6 +304,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerAllows
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -359,6 +361,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerUsesBr
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -412,6 +415,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadA
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -488,6 +492,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 				"gpt-5.1",
 				nil,
 				OpenAIUpstreamTransportAny,
+				false,
 			)
 			require.NoError(t, err)
 			require.NotNil(t, selection)
@@ -495,6 +500,70 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 			require.Equal(t, primary.ID, selection.Account.ID)
 		})
 	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeDoesNotBypassStickyForUnsupportedCompactCandidate(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(51125)
+	rateLimitedUntil := time.Now().Add(30 * time.Minute)
+	primary := Account{
+		ID:               51125,
+		Platform:         PlatformOpenAI,
+		Type:             AccountTypeAPIKey,
+		Status:           StatusActive,
+		Schedulable:      true,
+		Concurrency:      1,
+		Priority:         1,
+		RateLimitResetAt: &rateLimitedUntil,
+		Extra:            map[string]any{"openai_compact_supported": false},
+	}
+	backup := Account{
+		ID:          51126,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    11,
+		Extra:       map[string]any{"openai_compact_supported": true},
+	}
+
+	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		openAIAdvancedSchedulerSettingKey:        "true",
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+	})
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	cache := &schedulerTestGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:session_hash_over_limit_compact_backup": backup.ID,
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{primary, backup}},
+		cache:              cache,
+		cfg:                &config.Config{},
+		rateLimitService:   &RateLimitService{settingService: settingService},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	svc.SetSettingService(settingService)
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_hash_over_limit_compact_backup",
+		"gpt-5.4",
+		nil,
+		OpenAIUpstreamTransportAny,
+		true,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, backup.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerSessionSticky, decision.Layer)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesPreviousResponseFallbackAccount(t *testing.T) {
@@ -556,6 +625,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -614,6 +684,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
