@@ -752,6 +752,16 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_enabled": true,
 					"openai_over_limit_mode_enabled": true,
 					"openai_over_limit_cooldown_seconds": 10,
+					"openai_fast_policy_settings": {
+						"rules": [
+							{
+								"service_tier": "priority",
+								"action": "filter",
+								"scope": "all",
+								"fallback_action": "pass"
+							}
+						]
+					},
 					"custom_menu_items": [],
 					"custom_endpoints": [],
 					"payment_enabled": false,
@@ -936,6 +946,16 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_enabled": false,
 					"openai_over_limit_mode_enabled": false,
 					"openai_over_limit_cooldown_seconds": 0,
+					"openai_fast_policy_settings": {
+						"rules": [
+							{
+								"service_tier": "priority",
+								"action": "filter",
+								"scope": "all",
+								"fallback_action": "pass"
+							}
+						]
+					},
 					"payment_enabled": false,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
