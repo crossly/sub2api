@@ -847,6 +847,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_over_limit_mode_enabled": true,
 					"openai_over_limit_cooldown_seconds": 10,
 					"openai_codex_user_agent":           "",
+					"openai_allow_claude_code_codex_plugin": false,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
@@ -1085,6 +1086,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_over_limit_mode_enabled": false,
 					"openai_over_limit_cooldown_seconds": 0,
 					"openai_codex_user_agent":           "",
+					"openai_allow_claude_code_codex_plugin": false,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},

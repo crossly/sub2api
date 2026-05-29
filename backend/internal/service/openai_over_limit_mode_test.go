@@ -225,7 +225,7 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_OpenAIOverLimit
 	}
 	svc.SetSettingService(newOpenAIOverLimitSettingServiceForTest(t, true, 10))
 
-	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, "gpt-5.1", false)
+	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, "gpt-5.1", false, "")
 	require.NotNil(t, got)
 	require.Equal(t, dbAccount.ID, got.ID)
 }
