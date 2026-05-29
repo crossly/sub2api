@@ -423,6 +423,73 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadA
 	require.Equal(t, primary.ID, selection.Account.ID)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeFallsBackToDBWhenRateLimitedAccountMissingFromSnapshot(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(51116)
+	rateLimitedUntil := time.Now().Add(30 * time.Minute)
+	primary := Account{
+		ID:               51116,
+		Platform:         PlatformOpenAI,
+		Type:             AccountTypeOAuth,
+		Status:           StatusActive,
+		Schedulable:      true,
+		Concurrency:      1,
+		Priority:         1,
+		RateLimitResetAt: &rateLimitedUntil,
+	}
+	backup := Account{
+		ID:          51117,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    11,
+	}
+
+	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		openAIAdvancedSchedulerSettingKey:        "false",
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+	})
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	repo := productionLikeOpenAIOverLimitRepoStub{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{primary, backup}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:        repo,
+		cfg:                &config.Config{},
+		rateLimitService:   &RateLimitService{settingService: settingService},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		schedulerSnapshot: NewSchedulerSnapshotService(
+			&openAISnapshotCacheStub{
+				snapshotAccounts: []*Account{&backup},
+				accountsByID: map[int64]*Account{
+					backup.ID: &backup,
+				},
+			},
+			nil,
+			repo,
+			nil,
+			&config.Config{},
+		),
+	}
+	svc.SetSettingService(settingService)
+
+	selection, _, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, primary.ID, selection.Account.ID)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesStickyFallbackAccount(t *testing.T) {
 	testCases := []struct {
 		name              string
@@ -793,4 +860,30 @@ func TestOpenAIGatewayService_HandleCompatErrorResponse_MarksOpenAIOverLimitCool
 	require.Error(t, err)
 	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
 	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
+}
+
+func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotApplyLongRuntimeBlockOn429(t *testing.T) {
+	ctx := context.Background()
+	account := &Account{
+		ID:          55001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
+	}))
+
+	headers := make(http.Header)
+	headers.Set("x-ratelimit-reset-requests", strconv.FormatInt(time.Now().Add(30*time.Minute).Unix(), 10))
+
+	svc.maybeMarkOpenAIOverLimitCooldown(ctx, account, "gpt-5.1", http.StatusTooManyRequests)
+	svc.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, []byte(`{"error":{"message":"rate limited"}}`), "gpt-5.1")
+
+	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
