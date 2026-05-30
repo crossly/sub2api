@@ -79,6 +79,9 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	if s == nil || !isOpenAIAccount(account) {
 		return
 	}
+	if isOpenAIOverLimitRuntimeBlockBypassReason(reason) && s.getOpenAIOverLimitModeSettings(context.Background()).Enabled {
+		return
+	}
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
@@ -108,6 +111,15 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
 			return
 		}
+	}
+}
+
+func isOpenAIOverLimitRuntimeBlockBypassReason(reason string) bool {
+	switch reason {
+	case "429", "429_fallback":
+		return true
+	default:
+		return false
 	}
 }
 
