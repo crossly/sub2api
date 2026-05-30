@@ -180,6 +180,9 @@ func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account
 	if statusCode != http.StatusTooManyRequests || failedSwitches < openAIOAuth429StormMaxAccountSwitches {
 		return false
 	}
+	if s.getOpenAIOverLimitModeSettings(context.Background()).Enabled {
+		return false
+	}
 	if !isOpenAIOAuthAccount(account) {
 		return false
 	}

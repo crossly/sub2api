@@ -998,3 +998,17 @@ func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotRuntimeBlockViaRateLimit
 	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
+
+func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotStopFailoverDuringOAuth429Storm(t *testing.T) {
+	account := &Account{ID: 55003, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
+		SettingKeyOpenAIOverLimitModeEnabled:     "true",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
+	}))
+	for i := 0; i < openAIOAuth429StormThreshold; i++ {
+		svc.recordOpenAIOAuth429()
+	}
+
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 1))
+}

@@ -9,7 +9,7 @@
 
 services:
   sub2api:
-    image: ghcr.io/crossly/sub2api:0.1.126
+    image: ghcr.io/crossly/sub2api:latest
     pull_policy: always
     restart: unless-stopped
     ulimits:
