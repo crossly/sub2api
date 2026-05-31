@@ -243,6 +243,36 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_KeepsSuccessfulAccountForAttribution(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	quotaSvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	successAccount := &Account{ID: 3001, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_overlimit_usage_account",
+			Usage: OpenAIUsage{
+				InputTokens:  12,
+				OutputTokens: 6,
+			},
+			Model:    "gpt-5.5",
+			Duration: time.Second,
+		},
+		APIKey:        &APIKey{ID: 1001, Quota: 100, Group: &Group{ID: 1, Platform: PlatformOpenAI, RateMultiplier: 1}},
+		User:          &User{ID: 2001},
+		Account:       successAccount,
+		APIKeyService: quotaSvc,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, successAccount.ID, usageRepo.lastLog.AccountID)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Equal(t, successAccount.ID, billingRepo.lastCmd.AccountID)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

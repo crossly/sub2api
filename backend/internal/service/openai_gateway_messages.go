@@ -154,9 +154,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
 		}
+		preserveLegacyCacheIdentity := s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions: true,
 			PreserveToolCallIDs:     true,
+			PreservePromptCacheKey:  preserveLegacyCacheIdentity,
 		})
 		forcedTemplateText := ""
 		if s.cfg != nil {
@@ -189,7 +191,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
-		delete(reqBody, "prompt_cache_key")
+		if preserveLegacyCacheIdentity {
+			reqBody["prompt_cache_key"] = promptCacheKey
+		} else {
+			delete(reqBody, "prompt_cache_key")
+		}
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
 		}
@@ -255,9 +261,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
 	if promptCacheKey != "" {
-		isolatedSessionID := generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))
+		preserveLegacyCacheIdentity := s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
+		isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
+		isolatedSessionID := generateSessionUUID(isolated)
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
-		if upstreamReq.Header.Get("conversation_id") != "" {
+		if upstreamReq.Header.Get("conversation_id") != "" && !preserveLegacyCacheIdentity {
 			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
 		}
 	}
@@ -269,7 +277,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		upstreamReq.Header.Del("OpenAI-Beta")
 		upstreamReq.Header.Del("originator")
 	}
-	if account.Type == AccountTypeOAuth && promptCacheKey != "" && strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
+	if account.Type == AccountTypeOAuth && promptCacheKey != "" &&
+		!s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey) &&
+		strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
 		upstreamReq.Header.Del("conversation_id")
 	}
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {

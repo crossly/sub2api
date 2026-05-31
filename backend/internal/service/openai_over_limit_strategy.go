@@ -221,6 +221,20 @@ func (st openAIOverLimitStrategy) ShouldIgnorePreviousResponse(ctx context.Conte
 	return st.Settings(ctx).Enabled
 }
 
+func (st openAIOverLimitStrategy) ShouldPreserveLegacyCacheIdentity(
+	ctx context.Context,
+	account *Account,
+	promptCacheKey string,
+) bool {
+	if strings.TrimSpace(promptCacheKey) == "" {
+		return false
+	}
+	if account == nil || !account.IsOpenAI() || account.Type != AccountTypeOAuth {
+		return false
+	}
+	return st.Settings(ctx).Enabled
+}
+
 func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 	ctx context.Context,
 	groupID *int64,

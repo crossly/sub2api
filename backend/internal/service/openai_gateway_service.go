@@ -587,6 +587,10 @@ func (s *OpenAIGatewayService) shouldIgnorePreviousResponseForOpenAIOverLimit(ct
 	return s.openAIOverLimitStrategy().ShouldIgnorePreviousResponse(ctx, previousResponseID)
 }
 
+func (s *OpenAIGatewayService) shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx context.Context, account *Account, promptCacheKey string) bool {
+	return s.openAIOverLimitStrategy().ShouldPreserveLegacyCacheIdentity(ctx, account, promptCacheKey)
+}
+
 func (s *OpenAIGatewayService) maybeMarkOpenAIOverLimitCooldown(ctx context.Context, account *Account, requestedModel string, statusCode int) {
 	s.openAIOverLimitStrategy().HandleUpstreamError(ctx, account, requestedModel, statusCode)
 }
@@ -2719,12 +2723,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	if account.Type == AccountTypeOAuth {
 		codexResult := codexTransformResult{}
+		preserveLegacyCacheIdentity := s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
 		if compatMessagesBridge {
 			codexResult = applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 				IsCodexCLI:              isCodexCLI,
 				IsCompact:               isCompactRequest,
 				SkipDefaultInstructions: true,
 				PreserveToolCallIDs:     true,
+				PreservePromptCacheKey:  preserveLegacyCacheIdentity,
 			})
 			ensureCodexOAuthInstructionsField(reqBody)
 			bodyModified = true
@@ -2741,6 +2747,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+		if preserveLegacyCacheIdentity && promptCacheKey != "" {
+			reqBody["prompt_cache_key"] = promptCacheKey
+			bodyModified = true
+			disablePatch()
 		}
 	}
 
@@ -4339,6 +4350,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	if account.Type == AccountTypeOAuth {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
+		preserveLegacyCacheIdentity := compatMessagesBridge &&
+			s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
 		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
 		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
 		req.Header.Del("conversation_id")
@@ -4365,7 +4378,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		if promptCacheKey != "" {
 			isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
 			req.Header.Set("session_id", isolated)
-			if !compatMessagesBridge || clientConversationID != "" {
+			if !compatMessagesBridge || clientConversationID != "" || preserveLegacyCacheIdentity {
 				req.Header.Set("conversation_id", isolated)
 			}
 		}
