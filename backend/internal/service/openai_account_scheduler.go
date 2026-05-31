@@ -1179,6 +1179,33 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	decision := OpenAIAccountScheduleDecision{}
+	if s.openAIOverLimitStrategy().ShouldUsePriorityOnlySelection(
+		ctx,
+		groupID,
+		requestedModel,
+		excludedIDs,
+		requiredTransport,
+		requiredCapability,
+		requiredImageCapability,
+		requireCompact,
+	) {
+		decision.Layer = openAIAccountScheduleLayerLoadBalance
+		selection, err := s.selectOpenAIOverLimitPriorityFirst(
+			ctx,
+			groupID,
+			requestedModel,
+			excludedIDs,
+			requiredTransport,
+			requiredCapability,
+			requiredImageCapability,
+			requireCompact,
+		)
+		if selection != nil && selection.Account != nil {
+			decision.SelectedAccountID = selection.Account.ID
+			decision.SelectedAccountType = selection.Account.Type
+		}
+		return selection, decision, err
+	}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
 		decision.Layer = openAIAccountScheduleLayerLoadBalance

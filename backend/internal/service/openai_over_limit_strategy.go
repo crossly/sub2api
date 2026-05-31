@@ -221,6 +221,58 @@ func (st openAIOverLimitStrategy) ShouldIgnorePreviousResponse(ctx context.Conte
 	return st.Settings(ctx).Enabled
 }
 
+func (st openAIOverLimitStrategy) ShouldUsePriorityOnlySelection(
+	ctx context.Context,
+	groupID *int64,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+) bool {
+	if st.service == nil {
+		return false
+	}
+	settings := st.Settings(ctx)
+	if !settings.Enabled {
+		return false
+	}
+	accounts, err := st.CandidateAccounts(ctx, groupID)
+	if err != nil || len(accounts) == 0 {
+		return false
+	}
+
+	now := time.Now()
+	needsUpstreamCheck := st.service.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+	for i := range accounts {
+		candidate := &accounts[i]
+		if candidate.RateLimitResetAt == nil || !now.Before(*candidate.RateLimitResetAt) {
+			continue
+		}
+		if excludedIDs != nil {
+			if _, excluded := excludedIDs[candidate.ID]; excluded {
+				continue
+			}
+		}
+		if !st.service.isOpenAIAccountEligibleForRequest(ctx, candidate, requestedModel, requireCompact, requiredCapability) {
+			continue
+		}
+		if st.service.isOpenAIAccountRuntimeBlocked(candidate) {
+			continue
+		}
+		if !st.service.isOpenAIAccountTransportCompatible(candidate, requiredTransport) ||
+			!accountSupportsOpenAICapabilities(candidate, requiredCapability, requiredImageCapability) {
+			continue
+		}
+		if needsUpstreamCheck && groupID != nil && st.service.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, requestedModel, requireCompact) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func (st openAIOverLimitStrategy) ShouldPreserveLegacyCacheIdentity(
 	ctx context.Context,
 	account *Account,
