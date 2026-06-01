@@ -1879,50 +1879,6 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 	return s.selectAccountWithLoadAwareness(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, sessionHash, requestedModel, excludedIDs, false, "")
 }
 
-func (s *OpenAIGatewayService) selectOpenAIOverLimitPriorityFirst(
-	ctx context.Context,
-	groupID *int64,
-	requestedModel string,
-	excludedIDs map[int64]struct{},
-	requiredTransport OpenAIUpstreamTransport,
-	requiredCapability OpenAIEndpointCapability,
-	requiredImageCapability OpenAIImagesCapability,
-	requireCompact bool,
-) (*AccountSelectionResult, error) {
-	effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
-	cfg := s.schedulingConfig()
-	for {
-		account, err := s.selectAccountForModelWithExclusions(ctx, groupID, "", requestedModel, effectiveExcludedIDs, requireCompact, 0, requiredCapability)
-		if err != nil {
-			return nil, err
-		}
-		if account == nil {
-			return nil, ErrNoAvailableAccounts
-		}
-		if !s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-			!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) {
-			if effectiveExcludedIDs == nil {
-				effectiveExcludedIDs = make(map[int64]struct{})
-			}
-			if _, exists := effectiveExcludedIDs[account.ID]; exists {
-				return nil, ErrNoAvailableAccounts
-			}
-			effectiveExcludedIDs[account.ID] = struct{}{}
-			continue
-		}
-		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-		if err == nil && result != nil && result.Acquired {
-			return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
-		}
-		return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-			AccountID:      account.ID,
-			MaxConcurrency: account.Concurrency,
-			Timeout:        cfg.FallbackWaitTimeout,
-			MaxWaiting:     cfg.FallbackMaxWaiting,
-		})
-	}
-}
-
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability) (*AccountSelectionResult, error) {
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
