@@ -509,6 +509,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = resolveOpenAICompactForwardModel(account, testModelID)
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
+	if account.IsOpenAIAndroidMobile() {
+		return s.testOpenAIAndroidMobileConnection(c, account, testModelID)
+	}
 
 	// Route to image generation test if an image model is selected
 	if isOpenAIImageModel(testModelID) {
@@ -629,6 +632,61 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
+}
+
+func (s *AccountTestService) testOpenAIAndroidMobileConnection(c *gin.Context, account *Account, modelID string) error {
+	ctx := c.Request.Context()
+	authToken := account.GetOpenAIAccessToken()
+	if authToken == "" {
+		return s.sendErrorAndEnd(c, "No access token available")
+	}
+
+	modelSlug := account.GetOpenAIAndroidMobileModelSlug(modelID)
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelSlug})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Android Mobile backend 测试连接"})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, account.GetOpenAIAndroidMobileBaseURL()+"/backend-api/models", nil)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Android Mobile models request")
+	}
+	setOpenAIAndroidMobileHeaders(req, account, authToken, uuid.NewString(), "")
+	req.Header.Set("Accept", "application/json")
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Android Mobile backend request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+		}
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Android Mobile backend returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	if len(body) > 0 && !json.Valid(body) {
+		return s.sendErrorAndEnd(c, "Invalid Android Mobile models response")
+	}
+	if !strings.Contains(string(body), modelSlug) {
+		s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("Android Mobile backend 已连接；模型列表未显式包含 %s，仍可由转发时按账号模型 slug 尝试", modelSlug)})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Android Mobile backend 已连接，模型 %s 可见", modelSlug)})
+	}
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account

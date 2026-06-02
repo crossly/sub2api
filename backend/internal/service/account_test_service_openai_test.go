@@ -162,6 +162,45 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+func TestAccountTestService_OpenAIAndroidMobileUsesAndroidModelsProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"models":[{"slug":"gpt-5-5"}]}`)}
+	svc := &AccountTestService{httpUpstream: upstream}
+	account := &Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "android-token",
+			"chatgpt_account_id": "chatgpt-account",
+		},
+		Extra: map[string]any{
+			"openai_backend":     "android_mobile",
+			"android_device_id":  "device-test",
+			"android_model_slug": "gpt-5-5",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://android.chat.openai.com/backend-api/models", upstream.lastReq.URL.String())
+	require.Equal(t, "android.chat.openai.com", upstream.lastReq.Host)
+	require.Equal(t, "Bearer android-token", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
+	require.Equal(t, "device-test", upstream.lastReq.Header.Get("oai-device-id"))
+	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+	body := recorder.Body.String()
+	require.Contains(t, body, "Android Mobile backend")
+	require.Contains(t, body, "gpt-5-5")
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, upstream.lastReq.URL.String(), "codex/responses")
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()

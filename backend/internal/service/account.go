@@ -409,6 +409,8 @@ const (
 	OpenAICompactModeForceOn = "force_on"
 	// OpenAICompactModeForceOff always treats the account as compact-unsupported.
 	OpenAICompactModeForceOff = "force_off"
+	// OpenAIBackendAndroidMobile routes OpenAI OAuth traffic through the ChatGPT Android backend.
+	OpenAIBackendAndroidMobile = "android_mobile"
 )
 
 func normalizeOpenAICompactMode(mode string) string {
@@ -1058,6 +1060,13 @@ func (a *Account) IsOpenAIOAuth() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeOAuth
 }
 
+func (a *Account) IsOpenAIAndroidMobile() bool {
+	if a == nil || !a.IsOpenAIOAuth() {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(a.getExtraString("openai_backend")), OpenAIBackendAndroidMobile)
+}
+
 func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
 }
@@ -1110,6 +1119,31 @@ func (a *Account) GetOpenAIUserAgent() string {
 	return a.GetCredential("user_agent")
 }
 
+func (a *Account) GetOpenAIAndroidMobileBaseURL() string {
+	if a == nil || !a.IsOpenAIAndroidMobile() {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.getExtraString("android_base_url")), "/")
+	if baseURL == "" {
+		baseURL = "https://android.chat.openai.com"
+	}
+	return baseURL
+}
+
+func (a *Account) GetOpenAIAndroidMobileUserAgent() string {
+	if a == nil || !a.IsOpenAIAndroidMobile() {
+		return ""
+	}
+	userAgent := strings.TrimSpace(a.getExtraString("android_user_agent"))
+	if userAgent == "" {
+		userAgent = strings.TrimSpace(a.GetOpenAIUserAgent())
+	}
+	if userAgent == "" {
+		userAgent = "ChatGPT/1.2026.146 (Android 16; Android; build 2614621)"
+	}
+	return userAgent
+}
+
 func (a *Account) GetChatGPTAccountID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
@@ -1122,6 +1156,34 @@ func (a *Account) GetOpenAIDeviceID() string {
 		return ""
 	}
 	return strings.TrimSpace(a.GetExtraString("openai_device_id"))
+}
+
+func (a *Account) GetOpenAIAndroidMobileDeviceID() string {
+	if a == nil || !a.IsOpenAIAndroidMobile() {
+		return ""
+	}
+	deviceID := strings.TrimSpace(a.getExtraString("android_device_id"))
+	if deviceID == "" {
+		deviceID = a.GetOpenAIDeviceID()
+	}
+	if deviceID == "" {
+		deviceID = "sub2api-android-" + strconv.FormatInt(a.ID, 10)
+	}
+	return deviceID
+}
+
+func (a *Account) GetOpenAIAndroidMobileModelSlug(requestedModel string) string {
+	if a == nil || !a.IsOpenAIAndroidMobile() {
+		return requestedModel
+	}
+	if model := strings.TrimSpace(a.getExtraString("android_model_slug")); model != "" {
+		return model
+	}
+	model := strings.TrimSpace(requestedModel)
+	if model == "" {
+		return "gpt-5-5"
+	}
+	return strings.ReplaceAll(model, ".", "-")
 }
 
 func (a *Account) GetOpenAISessionID() string {
