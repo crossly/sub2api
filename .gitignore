@@ -119,6 +119,8 @@ tests
 CLAUDE.md
 .claude
 scripts
+!backend/scripts/
+!backend/scripts/resolve-version.sh
 .code-review-state
 #openspec/
 code-reviews/
@@ -137,6 +139,8 @@ docs/plans/*
 !docs/plans/2026-04-24-openai-over-limit-merge-playbook.md
 !docs/plans/2026-04-24-local-customization-maintenance-map.md
 !docs/plans/2026-06-01-upstream-0.1.133-local-delta-maintenance.md
+!docs/legal/
+!docs/legal/*.md
 .serena/
 .codex/
 frontend/coverage/

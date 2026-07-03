@@ -241,7 +241,7 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_OpenAIOverLimit
 	}
 	svc.SetSettingService(newOpenAIOverLimitSettingServiceForTest(t, true, 10))
 
-	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, "gpt-5.1", false, "")
+	got := svc.recheckSelectedOpenAIAccountFromDB(ctx, &Account{ID: dbAccount.ID, Platform: PlatformOpenAI}, PlatformOpenAI, "gpt-5.1", false, "")
 	require.NotNil(t, got)
 	require.Equal(t, dbAccount.ID, got.ID)
 }
@@ -285,6 +285,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerAllows
 		Concurrency:      1,
 		Priority:         0,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51002,
@@ -294,6 +295,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerAllows
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    5,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -342,6 +344,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerUsesBr
 		Concurrency:      1,
 		Priority:         1,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51102,
@@ -351,6 +354,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerUsesBr
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    11,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -398,6 +402,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadA
 		Concurrency:      1,
 		Priority:         1,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51112,
@@ -407,6 +412,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadAwarenessUsesBroadA
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    11,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -452,6 +458,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBatchOverLimitUsesR
 		Concurrency:      10,
 		Priority:         1,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51114,
@@ -461,6 +468,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBatchOverLimitUsesR
 		Schedulable: true,
 		Concurrency: 10,
 		Priority:    11,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -508,6 +516,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeFallsBackT
 		Concurrency:      1,
 		Priority:         1,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51117,
@@ -517,6 +526,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeFallsBackT
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    11,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -591,6 +601,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 				Concurrency:      1,
 				Priority:         1,
 				RateLimitResetAt: &rateLimitedUntil,
+				GroupIDs:         []int64{groupID},
 			}
 			backup := Account{
 				ID:          51122,
@@ -600,6 +611,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 				Schedulable: true,
 				Concurrency: 1,
 				Priority:    11,
+				GroupIDs:    []int64{groupID},
 			}
 
 			settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -655,6 +667,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeDoes
 		Priority:         1,
 		RateLimitResetAt: &rateLimitedUntil,
 		Extra:            map[string]any{"openai_compact_supported": false},
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          51126,
@@ -665,6 +678,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeDoes
 		Concurrency: 1,
 		Priority:    11,
 		Extra:       map[string]any{"openai_compact_supported": true},
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -721,6 +735,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_enabled": true,
 		},
+		GroupIDs: []int64{groupID},
 	}
 	backup := Account{
 		ID:          51132,
@@ -733,6 +748,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_enabled": true,
 		},
+		GroupIDs: []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -787,6 +803,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		Concurrency:      1,
 		Priority:         0,
 		RateLimitResetAt: &rateLimitedUntil,
+		GroupIDs:         []int64{groupID},
 	}
 	backup := Account{
 		ID:          52002,
@@ -796,6 +813,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    5,
+		GroupIDs:    []int64{groupID},
 	}
 
 	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
@@ -854,7 +872,7 @@ func TestOpenAIGatewayService_HandleFailoverSideEffects_MarksOpenAIOverLimitCool
 		Body:       io.NopCloser(strings.NewReader(`{"error":"rate limited"}`)),
 	}
 
-	svc.handleFailoverSideEffects(ctx, resp, account)
+	svc.handleFailoverSideEffects(ctx, resp, account, []byte(`{"error":"rate limited"}`), "gpt-5.1")
 
 	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
 	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
