@@ -51,6 +51,11 @@ type TestEvent struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type openAIAccountTestOAuthService interface {
+	RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error)
+	BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any
+}
+
 const (
 	defaultGeminiTextTestPrompt  = "hi"
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
@@ -65,6 +70,7 @@ func isOpenAIImageModel(model string) bool {
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
+	openaiOAuthService        openAIAccountTestOAuthService
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
@@ -77,6 +83,7 @@ type AccountTestService struct {
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
+	openaiOAuthService openAIAccountTestOAuthService,
 	geminiTokenProvider *GeminiTokenProvider,
 	claudeTokenProvider *ClaudeTokenProvider,
 	grokTokenProvider *GrokTokenProvider,
@@ -87,6 +94,7 @@ func NewAccountTestService(
 ) *AccountTestService {
 	return &AccountTestService{
 		accountRepo:               accountRepo,
+		openaiOAuthService:        openaiOAuthService,
 		geminiTokenProvider:       geminiTokenProvider,
 		claudeTokenProvider:       claudeTokenProvider,
 		grokTokenProvider:         grokTokenProvider,
@@ -502,6 +510,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
+	if err := s.refreshOpenAITestAccountIfPossible(ctx, account); err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to refresh OpenAI OAuth token: %s", err.Error()))
+	}
+
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
 	if testModelID == "" {
@@ -910,6 +922,30 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	s.sendEvent(c, TestEvent{Type: "content", Text: "Compact probe succeeded"})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+func (s *AccountTestService) refreshOpenAITestAccountIfPossible(ctx context.Context, account *Account) error {
+	if s == nil || account == nil || !account.IsOAuth() || account.Platform != PlatformOpenAI {
+		return nil
+	}
+	if s.openaiOAuthService == nil {
+		return nil
+	}
+	if strings.TrimSpace(account.GetCredential("refresh_token")) == "" {
+		return nil
+	}
+
+	tokenInfo, err := s.openaiOAuthService.RefreshAccountToken(ctx, account)
+	if err != nil {
+		return err
+	}
+	if tokenInfo == nil {
+		return nil
+	}
+
+	newCredentials := s.openaiOAuthService.BuildAccountCredentials(tokenInfo)
+	account.Credentials = MergeCredentials(account.Credentials, newCredentials)
 	return nil
 }
 

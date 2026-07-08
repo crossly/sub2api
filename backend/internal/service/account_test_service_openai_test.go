@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,6 +136,76 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Equal(t, 42.0, repo.updatedExtra["codex_5h_used_percent"])
 	require.Equal(t, 88.0, repo.updatedExtra["codex_7d_used_percent"])
 	require.Contains(t, recorder.Body.String(), "test_complete")
+}
+
+func TestAccountTestService_OpenAIOAuthRefreshesBeforeProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	oauthSvc := &openAIOAuthServiceStub{
+		tokenInfo: &OpenAITokenInfo{
+			AccessToken:  "refreshed-access-token",
+			RefreshToken: "refreshed-refresh-token",
+			ExpiresIn:    3600,
+		},
+	}
+	svc := &AccountTestService{
+		openaiOAuthService: oauthSvc,
+		httpUpstream:       upstream,
+	}
+	account := &Account{
+		ID:          191,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":  "stale-access-token",
+			"refresh_token": "refresh-token",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&oauthSvc.refreshCalled))
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "Bearer refreshed-access-token", upstream.requests[0].Header.Get("Authorization"))
+	require.Equal(t, "refreshed-access-token", account.GetOpenAIAccessToken())
+}
+
+func TestAccountTestService_OpenAIOAuthRefreshFailureStopsProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &queuedHTTPUpstream{}
+	oauthSvc := &openAIOAuthServiceStub{
+		refreshErr: fmt.Errorf("invalid_grant"),
+	}
+	svc := &AccountTestService{
+		openaiOAuthService: oauthSvc,
+		httpUpstream:       upstream,
+	}
+	account := &Account{
+		ID:          192,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":  "stale-access-token",
+			"refresh_token": "refresh-token",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.Error(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&oauthSvc.refreshCalled))
+	require.Len(t, upstream.requests, 0)
+	require.Contains(t, recorder.Body.String(), "Failed to refresh OpenAI OAuth token")
 }
 
 func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *testing.T) {

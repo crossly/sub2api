@@ -2,10 +2,12 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -13,6 +15,27 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+type compactOpenAIOAuthServiceStub struct {
+	tokenInfo     *OpenAITokenInfo
+	refreshErr    error
+	refreshCalled int32
+}
+
+func (s *compactOpenAIOAuthServiceStub) RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
+	atomic.AddInt32(&s.refreshCalled, 1)
+	if s.refreshErr != nil {
+		return nil, s.refreshErr
+	}
+	return s.tokenInfo, nil
+}
+
+func (s *compactOpenAIOAuthServiceStub) BuildAccountCredentials(info *OpenAITokenInfo) map[string]any {
+	return map[string]any{
+		"access_token":  info.AccessToken,
+		"refresh_token": info.RefreshToken,
+	}
+}
 
 func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersistsSupport(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -28,6 +51,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"access_token":               "oauth-token",
+			"refresh_token":              "refresh-token",
 			"chatgpt_account_id":         "chatgpt-acc",
 			"chatgpt_account_is_fedramp": true,
 		},
@@ -41,9 +65,17 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-probe"}},
 		Body:       io.NopCloser(strings.NewReader(`{"id":"cmp_probe","status":"completed"}`)),
 	}}
+	oauthSvc := &compactOpenAIOAuthServiceStub{
+		tokenInfo: &OpenAITokenInfo{
+			AccessToken:  "fresh-access-token",
+			RefreshToken: "fresh-refresh-token",
+			ExpiresIn:    3600,
+		},
+	}
 	svc := &AccountTestService{
-		accountRepo:  repo,
-		httpUpstream: upstream,
+		accountRepo:        repo,
+		openaiOAuthService: oauthSvc,
+		httpUpstream:       upstream,
 	}
 
 	rec := httptest.NewRecorder()
@@ -52,10 +84,12 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 
 	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
 	require.NoError(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&oauthSvc.refreshCalled))
 
 	require.Equal(t, chatgptCodexAPIURL+"/compact", upstream.lastReq.URL.String())
 	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "Bearer fresh-access-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
