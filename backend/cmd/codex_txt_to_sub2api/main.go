@@ -81,12 +81,16 @@ func main() {
 	fmt.Println(outputPath)
 }
 
-func run(inputPath, outputPath string, now time.Time) error {
+func run(inputPath, outputPath string, now time.Time) (err error) {
 	in, err := os.Open(inputPath)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		if closeErr := in.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	payload, warnings, err := convertTSVToPayload(in, now)
 	if err != nil {
@@ -101,7 +105,11 @@ func run(inputPath, outputPath string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if closeErr := out.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
