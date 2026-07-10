@@ -192,10 +192,10 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.quotaHeadroomWeight": "额度余量",
     "admin.settings.openaiExperimentalScheduler.previousResponseWeight": "previous_response 粘性",
     "admin.settings.openaiExperimentalScheduler.sessionStickyWeight": "session_hash 粘性",
-    "admin.settings.openaiOverLimitMode.title": "OpenAI 超限模式",
-    "admin.settings.openaiOverLimitMode.description": "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
-    "admin.settings.openaiOverLimitMode.cooldownSeconds": "短冷却（秒）",
-    "admin.settings.openaiOverLimitMode.cooldownSecondsHint": "429/529 后该账号暂不再被立即复用；开启超限模式时，空值或小于 10 秒都会按 10 秒兜底；冷却结束后，仍可在账号级限流窗口内继续参与调度（10-300 秒）。",
+    "admin.settings.openaiOverLimitMode.title": "OpenAI 429 超限探测",
+    "admin.settings.openaiOverLimitMode.description": "允许处于账号级 429 限流窗口的 OpenAI 账号按优先级定期重试；仍返回 429 时自动切换到下一账号。",
+    "admin.settings.openaiOverLimitMode.cooldownSeconds": "重试间隔（秒）",
+    "admin.settings.openaiOverLimitMode.cooldownSecondsHint": "每次 429 后等待指定时间再探测该账号，范围 10-300 秒。529 继续使用独立的过载冷却策略。",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
     "admin.settings.platformQuota.platform": "平台",
@@ -852,9 +852,9 @@ describe("admin SettingsView payment visible method controls", () => {
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain("OpenAI 超限模式");
+    expect(wrapper.text()).toContain("OpenAI 429 超限探测");
     expect(wrapper.text()).toContain(
-      "允许 OpenAI 账号在上游返回 429/529 后进入短冷却，并在账号级限流窗口内继续参与后续调度尝试。",
+      "允许处于账号级 429 限流窗口的 OpenAI 账号按优先级定期重试；仍返回 429 时自动切换到下一账号。",
     );
     expect(wrapper.text()).not.toContain("529 过载冷却");
   });
@@ -873,7 +873,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
     const openaiPolicyCard = wrapper
       .findAll(".card")
-      .find((node) => node.text().includes("OpenAI 超限模式"));
+      .find((node) => node.text().includes("OpenAI 429 超限探测"));
 
     expect(openaiPolicyCard).toBeDefined();
 
@@ -897,7 +897,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
     const openaiPolicyCard = wrapper
       .findAll(".card")
-      .find((node) => node.text().includes("OpenAI 超限模式"));
+      .find((node) => node.text().includes("OpenAI 429 超限探测"));
 
     expect(openaiPolicyCard).toBeDefined();
 

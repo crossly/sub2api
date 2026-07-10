@@ -216,7 +216,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	} else {
-		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, reqModel, upstreamPassthroughModel)
+		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 		if err != nil {
 			return nil, err
 		}
@@ -632,12 +632,16 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	if errType == "" {
 		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
 	}
-	combined := strings.TrimSpace(errType + " " + code + " " + strings.ToLower(strings.TrimSpace(message)))
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = extractOpenAISSEErrorMessage(payload)
+	}
+	combined := strings.TrimSpace(errType + " " + code + " " + strings.ToLower(message))
 	switch {
+	case isOpenAIRateLimitSignal(code, errType, message):
+		return http.StatusTooManyRequests
 	case strings.Contains(errType, "invalid_request"):
 		return http.StatusBadRequest
-	case strings.Contains(combined, "rate_limit"):
-		return http.StatusTooManyRequests
 	case strings.Contains(combined, "authentication") || strings.Contains(combined, "unauthorized") || strings.Contains(combined, "invalid_api_key"):
 		return http.StatusUnauthorized
 	case strings.Contains(combined, "permission") || strings.Contains(combined, "forbidden") || strings.Contains(combined, "access denied"):
@@ -672,27 +676,19 @@ func openAIStreamFailedEventPassthroughBody(payload []byte, failedMessage string
 		return body
 	}
 
-	errorPayload := gin.H{}
-	if errType := strings.TrimSpace(gjson.Get(responseError.Raw, "type").String()); errType != "" {
-		errorPayload["type"] = errType
-	}
-	if code := strings.TrimSpace(gjson.Get(responseError.Raw, "code").String()); code != "" {
-		errorPayload["code"] = code
-	}
-	if param := strings.TrimSpace(gjson.Get(responseError.Raw, "param").String()); param != "" {
-		errorPayload["param"] = param
-	}
-	message := strings.TrimSpace(gjson.Get(responseError.Raw, "message").String())
-	if message == "" {
-		message = strings.TrimSpace(failedMessage)
-	}
-	if message != "" {
-		errorPayload["message"] = message
-	}
+	errorPayload := []byte(responseError.Raw)
 	if len(errorPayload) == 0 {
 		return payload
 	}
-	body, err := marshalOpenAIUpstreamJSON(gin.H{"error": errorPayload})
+	if !gjson.GetBytes(errorPayload, "message").Exists() && strings.TrimSpace(failedMessage) != "" {
+		withMessage, err := sjson.SetBytes(errorPayload, "message", strings.TrimSpace(failedMessage))
+		if err == nil {
+			errorPayload = withMessage
+		}
+	}
+	body, err := marshalOpenAIUpstreamJSON(struct {
+		Error json.RawMessage `json:"error"`
+	}{Error: json.RawMessage(errorPayload)})
 	if err != nil {
 		return payload
 	}
@@ -737,6 +733,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
 	}
 	combined := strings.ToLower(strings.TrimSpace(message + " " + code + " " + errType))
+	if isOpenAIRateLimitSignal(code, errType, message) {
+		return true
+	}
 	if combined == "" {
 		return true
 	}
@@ -779,10 +778,11 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 		detail = truncateString(string(payload), maxBytes)
 	}
 	if c != nil {
-		setOpsUpstreamError(c, http.StatusBadGateway, message, detail)
+		semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
+		setOpsUpstreamError(c, semanticStatus, message, detail)
 		event := OpsUpstreamErrorEvent{
 			Platform:           PlatformOpenAI,
-			UpstreamStatusCode: http.StatusBadGateway,
+			UpstreamStatusCode: semanticStatus,
 			UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
 			Passthrough:        passthrough,
 			Kind:               kind,
@@ -818,10 +818,34 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 			"message": message,
 		},
 	})
+	statusCode := http.StatusBadGateway
+	if openAIStreamFailedEventSemanticStatus(payload, message) == http.StatusTooManyRequests {
+		statusCode = http.StatusTooManyRequests
+	}
 	return &UpstreamFailoverError{
-		StatusCode:   http.StatusBadGateway,
+		StatusCode:   statusCode,
 		ResponseBody: body,
 	}
+}
+
+func (s *OpenAIGatewayService) handleOpenAIStreamFailedAccountState(
+	c *gin.Context,
+	account *Account,
+	payload []byte,
+	message string,
+) {
+	if s == nil || account == nil || openAIStreamFailedEventSemanticStatus(payload, message) != http.StatusTooManyRequests {
+		return
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	body := openAIStreamFailedEventPassthroughBody(payload, message)
+	if len(body) == 0 {
+		body = payload
+	}
+	s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, nil, body)
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
@@ -916,6 +940,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
+				s.handleOpenAIStreamFailedAccountState(c, account, dataBytes, failedMessage)
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
 				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
 				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
@@ -1055,6 +1080,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
 	c *gin.Context,
+	account *Account,
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
@@ -1068,7 +1094,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
 	if isEventStreamResponse(resp.Header) {
-		return s.handlePassthroughSSEToJSON(resp, c, body, originalModel, mappedModel)
+		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
 	usage := &OpenAIUsage{}
@@ -1109,7 +1135,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // response for the passthrough path. It mirrors handleSSEToJSON while
 // preserving passthrough payloads, except compact-only model remapping may
 // rewrite model fields back to the original requested model.
-func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
+func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
 	bodyText := string(body)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
@@ -1140,6 +1166,10 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			msg := extractOpenAISSEErrorMessage(terminalPayload)
 			if msg == "" {
 				msg = "Upstream compact response failed"
+			}
+			s.handleOpenAIStreamFailedAccountState(c, account, terminalPayload, msg)
+			if openAIStreamFailedEventSemanticStatus(terminalPayload, msg) == http.StatusTooManyRequests {
+				return nil, s.newOpenAIStreamFailoverError(c, account, true, resp.Header.Get("x-request-id"), terminalPayload, msg)
 			}
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}

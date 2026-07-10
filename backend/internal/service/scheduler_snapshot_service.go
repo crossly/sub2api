@@ -111,18 +111,33 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	mode := s.resolveMode(platform, hasForcePlatform)
 	bucket := s.bucketFor(groupID, platform, mode)
+	accounts, err := s.listAccountsForBucket(ctx, bucket, useMixed)
+	return accounts, useMixed, err
+}
 
+// ListOpenAIOverLimitAccounts reads the dedicated OpenAI probe pool. Unlike a
+// normal schedulable bucket, membership does not exclude an active global 429
+// window; current account metadata is still hydrated from sched:meta on every read.
+func (s *SchedulerSnapshotService) ListOpenAIOverLimitAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
+	if s == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	bucket := s.bucketFor(groupID, PlatformOpenAI, SchedulerModeOpenAIOverLimit)
+	return s.listAccountsForBucket(ctx, bucket, false)
+}
+
+func (s *SchedulerSnapshotService) listAccountsForBucket(ctx context.Context, bucket SchedulerBucket, useMixed bool) ([]Account, error) {
 	if s.cache != nil {
 		cached, hit, err := s.cache.GetSnapshot(ctx, bucket)
 		if err != nil {
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
-			return derefAccounts(cached), useMixed, nil
+			return derefAccounts(cached), nil
 		}
 	}
 
 	if err := s.guardFallback(ctx); err != nil {
-		return nil, useMixed, err
+		return nil, err
 	}
 
 	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
@@ -130,7 +145,7 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 
 	accounts, err := s.loadAccountsFromDB(fallbackCtx, bucket, useMixed)
 	if err != nil {
-		return nil, useMixed, err
+		return nil, err
 	}
 
 	if s.cache != nil {
@@ -139,7 +154,7 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		}
 	}
 
-	return accounts, useMixed, nil
+	return accounts, nil
 }
 
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -189,12 +204,14 @@ func (s *SchedulerSnapshotService) runInitialRebuild() {
 	if err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
 	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
+	defaultBuckets, defaultErr := s.defaultBuckets(ctx)
+	if defaultErr != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", defaultErr)
+		if len(buckets) == 0 {
 			return
 		}
+	} else {
+		buckets = dedupeBuckets(append(buckets, defaultBuckets...))
 	}
 	if err := s.rebuildBuckets(ctx, buckets, "startup"); err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild startup failed: %v", err)
@@ -548,6 +565,11 @@ func (s *SchedulerSnapshotService) rebuildBucketsForPlatform(ctx context.Context
 		if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeForced}, reason); err != nil && firstErr == nil {
 			firstErr = err
 		}
+		if platform == PlatformOpenAI {
+			if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeOpenAIOverLimit}, reason); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 		if platform == PlatformAnthropic || platform == PlatformGemini {
 			if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeMixed}, reason); err != nil && firstErr == nil {
 				firstErr = err
@@ -610,12 +632,14 @@ func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
 		return err
 	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
-			return err
+	defaultBuckets, defaultErr := s.defaultBuckets(ctx)
+	if defaultErr != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", defaultErr)
+		if len(buckets) == 0 {
+			return defaultErr
 		}
+	} else {
+		buckets = dedupeBuckets(append(buckets, defaultBuckets...))
 	}
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
@@ -674,6 +698,23 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 	groupID := bucket.GroupID
 	if s.isRunModeSimple() {
 		groupID = 0
+	}
+	if bucket.Mode == SchedulerModeOpenAIOverLimit {
+		if bucket.Platform != PlatformOpenAI {
+			return []Account{}, nil
+		}
+		if groupID > 0 {
+			accounts, err := s.accountRepo.ListByGroup(ctx, groupID)
+			if err != nil {
+				return nil, err
+			}
+			return filterActiveOpenAIAccounts(accounts, false), nil
+		}
+		accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		if err != nil {
+			return nil, err
+		}
+		return filterActiveOpenAIAccounts(accounts, !s.isRunModeSimple()), nil
 	}
 
 	if useMixed {
@@ -821,6 +862,9 @@ func (s *SchedulerSnapshotService) defaultBuckets(ctx context.Context) ([]Schedu
 	for _, platform := range platforms {
 		buckets = append(buckets, SchedulerBucket{GroupID: 0, Platform: platform, Mode: SchedulerModeSingle})
 		buckets = append(buckets, SchedulerBucket{GroupID: 0, Platform: platform, Mode: SchedulerModeForced})
+		if platform == PlatformOpenAI {
+			buckets = append(buckets, SchedulerBucket{GroupID: 0, Platform: platform, Mode: SchedulerModeOpenAIOverLimit})
+		}
 		if platform == PlatformAnthropic || platform == PlatformGemini {
 			buckets = append(buckets, SchedulerBucket{GroupID: 0, Platform: platform, Mode: SchedulerModeMixed})
 		}
@@ -840,6 +884,9 @@ func (s *SchedulerSnapshotService) defaultBuckets(ctx context.Context) ([]Schedu
 		}
 		buckets = append(buckets, SchedulerBucket{GroupID: group.ID, Platform: group.Platform, Mode: SchedulerModeSingle})
 		buckets = append(buckets, SchedulerBucket{GroupID: group.ID, Platform: group.Platform, Mode: SchedulerModeForced})
+		if group.Platform == PlatformOpenAI {
+			buckets = append(buckets, SchedulerBucket{GroupID: group.ID, Platform: group.Platform, Mode: SchedulerModeOpenAIOverLimit})
+		}
 		if group.Platform == PlatformAnthropic || group.Platform == PlatformGemini {
 			buckets = append(buckets, SchedulerBucket{GroupID: group.ID, Platform: group.Platform, Mode: SchedulerModeMixed})
 		}

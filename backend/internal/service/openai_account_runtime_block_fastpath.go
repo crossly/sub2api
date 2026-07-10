@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,13 @@ const (
 	openAIOAuth429StormThreshold          = 20
 	openAIOAuth429StormMaxAccountSwitches = 1
 )
+
+type openAIAccountRuntimeBlock struct {
+	HardUntil      time.Time
+	HardReason     string
+	RateLimitedAt  time.Time
+	RateLimitUntil time.Time
+}
 
 func openAIAccountStateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	base := context.Background()
@@ -76,9 +84,6 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 		return
 	}
 	s.recordOpenAIOAuth429()
-	if s.getOpenAIOverLimitModeSettings(ctx).Enabled {
-		return
-	}
 
 	cooldownUntil := time.Now().Add(openAIOAuth429FallbackCooldown)
 	if s.rateLimitService != nil {
@@ -99,42 +104,56 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	if s == nil || !isOpenAIAccount(account) {
 		return
 	}
-	if isOpenAIOverLimitRuntimeBlockBypassReason(reason) && s.getOpenAIOverLimitModeSettings(context.Background()).Enabled {
-		return
-	}
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
 		blockUntil = now.Add(openAIStopSchedulingBridgeCooldown)
 	}
+	reason = strings.TrimSpace(reason)
+	isRateLimit := isOpenAIRateLimitRuntimeBlockReason(reason)
 
 	for {
-		current, loaded := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
+		currentValue, loaded := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
 		if !loaded {
-			actual, stored := s.openaiAccountRuntimeBlockUntil.LoadOrStore(account.ID, blockUntil)
+			block := openAIAccountRuntimeBlock{}
+			if isRateLimit {
+				block.RateLimitedAt = now
+				block.RateLimitUntil = blockUntil
+			} else {
+				block.HardUntil = blockUntil
+				block.HardReason = reason
+			}
+			actual, stored := s.openaiAccountRuntimeBlockUntil.LoadOrStore(account.ID, block)
 			if !stored {
 				return
 			}
-			current = actual
+			currentValue = actual
 		}
 
-		currentUntil, ok := current.(time.Time)
-		if !ok || currentUntil.IsZero() {
-			if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
-				return
-			}
-			continue
+		currentBlock, ok := currentValue.(openAIAccountRuntimeBlock)
+		if !ok {
+			currentBlock = openAIAccountRuntimeBlock{}
 		}
-		if currentUntil.After(blockUntil) {
+		next := currentBlock
+		if isRateLimit {
+			next.RateLimitedAt = now
+			if next.RateLimitUntil.Before(blockUntil) {
+				next.RateLimitUntil = blockUntil
+			}
+		} else if next.HardUntil.Before(blockUntil) {
+			next.HardUntil = blockUntil
+			next.HardReason = reason
+		}
+		if next == currentBlock {
 			return
 		}
-		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
+		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, currentValue, next) {
 			return
 		}
 	}
 }
 
-func isOpenAIOverLimitRuntimeBlockBypassReason(reason string) bool {
+func isOpenAIRateLimitRuntimeBlockReason(reason string) bool {
 	switch reason {
 	case "429", "429_fallback":
 		return true
@@ -158,15 +177,35 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	if !ok {
 		return false
 	}
-	cooldownUntil, ok := value.(time.Time)
-	if !ok || cooldownUntil.IsZero() {
+	block, ok := value.(openAIAccountRuntimeBlock)
+	if !ok {
 		s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
 		return false
 	}
-	if time.Now().Before(cooldownUntil) {
+	now := time.Now()
+	if !block.HardUntil.IsZero() && now.Before(block.HardUntil) {
 		return true
 	}
-	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+
+	settings := openAIOverLimitModeSettings{}
+	if account.IsOpenAI() {
+		settings = s.getOpenAIOverLimitModeSettings(context.Background())
+	}
+	if settings.Enabled && !block.RateLimitedAt.IsZero() {
+		probeAt := block.RateLimitedAt.Add(time.Duration(settings.CooldownSeconds) * time.Second)
+		if now.Before(probeAt) {
+			return true
+		}
+	} else if !block.RateLimitUntil.IsZero() && now.Before(block.RateLimitUntil) {
+		return true
+	}
+
+	rateLimitRetentionUntil := block.RateLimitedAt.Add(time.Duration(maxOpenAIOverLimitCooldownSeconds) * time.Second)
+	if (block.HardUntil.IsZero() || !now.Before(block.HardUntil)) &&
+		(block.RateLimitUntil.IsZero() || !now.Before(block.RateLimitUntil)) &&
+		(block.RateLimitedAt.IsZero() || !now.Before(rateLimitRetentionUntil)) {
+		s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+	}
 	return false
 }
 

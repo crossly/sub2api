@@ -3,15 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"golang.org/x/sync/singleflight"
 )
 
 type openAIOverLimitModeSettings struct {
@@ -28,10 +24,8 @@ const (
 	openAIOverLimitSettingsCacheTTL   = 5 * time.Second
 	openAIOverLimitSettingsDBTimeout  = 2 * time.Second
 	minOpenAIOverLimitCooldownSeconds = 10
+	maxOpenAIOverLimitCooldownSeconds = 300
 )
-
-var openAIOverLimitSettingsCache atomic.Value // *cachedOpenAIOverLimitModeSettings
-var openAIOverLimitSettingsSF singleflight.Group
 
 type openAIOverLimitStrategy struct {
 	service *OpenAIGatewayService
@@ -43,10 +37,13 @@ func (s *OpenAIGatewayService) openAIOverLimitStrategy() openAIOverLimitStrategy
 
 func normalizeOpenAIOverLimitCooldownSeconds(enabled bool, cooldown int) int {
 	if !enabled {
-		return cooldown
+		return 0
 	}
 	if cooldown < minOpenAIOverLimitCooldownSeconds {
 		return minOpenAIOverLimitCooldownSeconds
+	}
+	if cooldown > maxOpenAIOverLimitCooldownSeconds {
+		return maxOpenAIOverLimitCooldownSeconds
 	}
 	return cooldown
 }
@@ -56,69 +53,48 @@ func normalizeOpenAIOverLimitModeSettings(settings openAIOverLimitModeSettings) 
 	return settings
 }
 
-func normalizeOpenAIOverLimitCooldownModel(requestedModel string) string {
-	trimmed := strings.TrimSpace(requestedModel)
-	if trimmed == "" {
-		return "*"
+func (s *SettingService) getOpenAIOverLimitModeSettings(ctx context.Context) openAIOverLimitModeSettings {
+	if s == nil || s.settingRepo == nil {
+		return openAIOverLimitModeSettings{}
 	}
-	return NormalizeOpenAICompatRequestedModel(trimmed)
-}
-
-func openAIOverLimitCooldownKey(accountID int64, requestedModel string) string {
-	return fmt.Sprintf("%d:%s", accountID, normalizeOpenAIOverLimitCooldownModel(requestedModel))
-}
-
-func openAIRequestedModelFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	model, _ := ctx.Value(ctxkey.Model).(string)
-	return strings.TrimSpace(model)
-}
-
-func (st openAIOverLimitStrategy) effectiveRequestedModel(ctx context.Context, requestedModel string) string {
-	if trimmed := strings.TrimSpace(requestedModel); trimmed != "" {
-		return trimmed
-	}
-	return openAIRequestedModelFromContext(ctx)
-}
-
-func (st openAIOverLimitStrategy) Settings(ctx context.Context) openAIOverLimitModeSettings {
-	if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
+	if cached, ok := s.openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.settings
 		}
 	}
 
-	result, _, _ := openAIOverLimitSettingsSF.Do("openai_over_limit_settings", func() (any, error) {
-		if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
+	result, _, _ := s.openAIOverLimitSettingsSF.Do("openai_over_limit_settings", func() (any, error) {
+		if cached, ok := s.openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return cached.settings, nil
 			}
 		}
+		version := s.openAIOverLimitSettingsVersion.Load()
 
+		baseCtx := ctx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), openAIOverLimitSettingsDBTimeout)
+		defer cancel()
+		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
+			SettingKeyOpenAIOverLimitModeEnabled,
+			SettingKeyOpenAIOverLimitCooldownSeconds,
+		})
 		settings := openAIOverLimitModeSettings{}
-		if service := st.service; service != nil {
-			if repo := service.openAIOverLimitSettingRepo(); repo != nil {
-				dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIOverLimitSettingsDBTimeout)
-				defer cancel()
-
-				if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitModeEnabled); err == nil {
-					settings.Enabled = strings.EqualFold(strings.TrimSpace(value), "true")
-				}
-				if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOverLimitCooldownSeconds); err == nil {
-					if seconds, convErr := strconv.Atoi(strings.TrimSpace(value)); convErr == nil {
-						settings.CooldownSeconds = seconds
-					}
-				}
+		if err == nil {
+			settings.Enabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIOverLimitModeEnabled]), "true")
+			if seconds, convErr := strconv.Atoi(strings.TrimSpace(values[SettingKeyOpenAIOverLimitCooldownSeconds])); convErr == nil {
+				settings.CooldownSeconds = seconds
 			}
 		}
-
 		settings = normalizeOpenAIOverLimitModeSettings(settings)
-		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitModeSettings{
-			settings:  settings,
-			expiresAt: time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
-		})
+		if s.openAIOverLimitSettingsVersion.Load() != version {
+			if current, ok := s.openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitModeSettings); ok && current != nil {
+				return current.settings, nil
+			}
+		}
+		s.storeOpenAIOverLimitModeSettings(settings)
 		return settings, nil
 	})
 
@@ -126,36 +102,56 @@ func (st openAIOverLimitStrategy) Settings(ctx context.Context) openAIOverLimitM
 	return settings
 }
 
-func (st openAIOverLimitStrategy) MarkCooldown(accountID int64, requestedModel string, cooldown time.Duration) {
-	if st.service == nil || accountID <= 0 || cooldown <= 0 {
+func (s *SettingService) setOpenAIOverLimitModeSettings(settings openAIOverLimitModeSettings) {
+	if s == nil {
 		return
 	}
-	st.service.openAIOverLimitUntil.Store(openAIOverLimitCooldownKey(accountID, requestedModel), time.Now().Add(cooldown))
+	s.openAIOverLimitSettingsVersion.Add(1)
+	s.storeOpenAIOverLimitModeSettings(settings)
+	s.openAIOverLimitSettingsSF.Forget("openai_over_limit_settings")
 }
 
-func (st openAIOverLimitStrategy) IsCooldownActive(accountID int64, requestedModel string, now time.Time) bool {
-	if st.service == nil || accountID <= 0 {
-		return false
-	}
+func (s *SettingService) storeOpenAIOverLimitModeSettings(settings openAIOverLimitModeSettings) {
+	settings = normalizeOpenAIOverLimitModeSettings(settings)
+	s.openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitModeSettings{
+		settings:  settings,
+		expiresAt: time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
+	})
+}
 
-	key := openAIOverLimitCooldownKey(accountID, requestedModel)
-	untilValue, ok := st.service.openAIOverLimitUntil.Load(key)
-	if !ok {
-		return false
+func (st openAIOverLimitStrategy) Settings(ctx context.Context) openAIOverLimitModeSettings {
+	if st.service == nil || st.service.settingService == nil {
+		return openAIOverLimitModeSettings{}
 	}
-	until, ok := untilValue.(time.Time)
-	if !ok {
-		st.service.openAIOverLimitUntil.Delete(key)
-		return false
-	}
-	if now.Before(until) {
+	return st.service.settingService.getOpenAIOverLimitModeSettings(ctx)
+}
+
+func openAIAccountGlobalRateLimitActive(account *Account, now time.Time) bool {
+	return account != nil && account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt)
+}
+
+func openAIOverLimitProbeReady(account *Account, settings openAIOverLimitModeSettings, now time.Time) bool {
+	if !openAIAccountGlobalRateLimitActive(account, now) {
 		return true
 	}
-	st.service.openAIOverLimitUntil.Delete(key)
-	return false
+	if !settings.Enabled {
+		return false
+	}
+	if account.RateLimitedAt == nil {
+		// A legacy row may have a reset timestamp without the observation time.
+		// Allow one probe; a failed probe writes both timestamps atomically.
+		return true
+	}
+	probeAt := account.RateLimitedAt.Add(time.Duration(settings.CooldownSeconds) * time.Second)
+	return !now.Before(probeAt)
 }
 
-func (st openAIOverLimitStrategy) IsAccountSelectable(account *Account, requestedModel string, settings openAIOverLimitModeSettings) bool {
+func (st openAIOverLimitStrategy) IsAccountSelectable(
+	ctx context.Context,
+	account *Account,
+	requestedModel string,
+	settings openAIOverLimitModeSettings,
+) bool {
 	if account == nil || !account.IsOpenAI() || !account.IsActive() || !account.Schedulable {
 		return false
 	}
@@ -176,11 +172,19 @@ func (st openAIOverLimitStrategy) IsAccountSelectable(account *Account, requeste
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return false
 	}
-	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
-		if !settings.Enabled {
-			return false
-		}
-		if st.IsCooldownActive(account.ID, requestedModel, now) {
+	if account.isModelRateLimitedWithContext(ctx, requestedModel) {
+		return false
+	}
+
+	globalRateLimited := openAIAccountGlobalRateLimitActive(account, now)
+	if globalRateLimited && !openAIOverLimitProbeReady(account, settings, now) {
+		return false
+	}
+	// A globally rate-limited account is intentionally probed in this mode. Quota
+	// auto-pause is derived from the same stale usage snapshot and must not veto
+	// that probe. Healthy accounts still respect the independent auto-pause policy.
+	if !globalRateLimited {
+		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 			return false
 		}
 	}
@@ -190,12 +194,22 @@ func (st openAIOverLimitStrategy) IsAccountSelectable(account *Account, requeste
 
 func (st openAIOverLimitStrategy) CandidateAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
 	service := st.service
-	if service == nil || service.accountRepo == nil {
-		if service != nil && service.schedulerSnapshot != nil {
-			accounts, _, err := service.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, PlatformOpenAI, false)
-			return accounts, err
-		}
+	if service == nil {
 		return nil, nil
+	}
+	if service.schedulerSnapshot != nil {
+		return service.schedulerSnapshot.ListOpenAIOverLimitAccounts(ctx, groupID)
+	}
+	if service.accountRepo == nil {
+		return nil, nil
+	}
+
+	if service.cfg != nil && service.cfg.RunMode == config.RunModeSimple {
+		accounts, err := service.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		if err != nil {
+			return nil, fmt.Errorf("query openai accounts failed: %w", err)
+		}
+		return filterActiveOpenAIAccounts(accounts, false), nil
 	}
 
 	if groupID != nil {
@@ -210,26 +224,15 @@ func (st openAIOverLimitStrategy) CandidateAccounts(ctx context.Context, groupID
 	if err != nil {
 		return nil, fmt.Errorf("query openai accounts failed: %w", err)
 	}
-	onlyUngrouped := service.cfg == nil || service.cfg.RunMode != config.RunModeSimple
-	return filterActiveOpenAIAccounts(accounts, onlyUngrouped), nil
+	return filterActiveOpenAIAccounts(accounts, true), nil
 }
 
-func (st openAIOverLimitStrategy) ShouldIgnorePreviousResponse(ctx context.Context, previousResponseID string) bool {
-	if strings.TrimSpace(previousResponseID) == "" {
-		return false
-	}
-	return st.Settings(ctx).Enabled
-}
-
-func (st openAIOverLimitStrategy) ShouldPreserveLegacyCacheIdentity(
+func (st openAIOverLimitStrategy) ShouldIgnorePreviousResponse(
 	ctx context.Context,
-	account *Account,
-	promptCacheKey string,
+	previousResponseID string,
+	previousResponseCanMove bool,
 ) bool {
-	if strings.TrimSpace(promptCacheKey) == "" {
-		return false
-	}
-	if account == nil || !account.IsOpenAI() || account.Type != AccountTypeOAuth {
+	if strings.TrimSpace(previousResponseID) == "" || !previousResponseCanMove {
 		return false
 	}
 	return st.Settings(ctx).Enabled
@@ -251,7 +254,6 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 	if !settings.Enabled {
 		return false
 	}
-
 	accounts, err := st.CandidateAccounts(ctx, groupID)
 	if err != nil || len(accounts) == 0 {
 		return false
@@ -261,7 +263,7 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 	needsUpstreamCheck := st.service.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	for i := range accounts {
 		candidate := &accounts[i]
-		if candidate.ID == stickyAccount.ID {
+		if candidate.ID == stickyAccount.ID || candidate.Priority >= stickyAccount.Priority {
 			continue
 		}
 		if excludedIDs != nil {
@@ -269,13 +271,10 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 				continue
 			}
 		}
-		if candidate.Priority >= stickyAccount.Priority {
+		if !openAIAccountGlobalRateLimitActive(candidate, now) {
 			continue
 		}
-		if candidate.RateLimitResetAt == nil || !now.Before(*candidate.RateLimitResetAt) {
-			continue
-		}
-		if !st.IsAccountSelectable(candidate, requestedModel, settings) {
+		if !st.IsAccountSelectable(ctx, candidate, requestedModel, settings) {
 			continue
 		}
 		if requireCompact && openAICompactSupportTier(candidate) == 0 {
@@ -286,43 +285,13 @@ func (st openAIOverLimitStrategy) ShouldBypassStickySession(
 		}
 		return true
 	}
-
 	return false
-}
-
-func (st openAIOverLimitStrategy) HandleUpstreamError(
-	ctx context.Context,
-	account *Account,
-	requestedModel string,
-	statusCode int,
-) {
-	if st.service == nil || account == nil || !account.IsOpenAI() {
-		return
-	}
-
-	switch statusCode {
-	case http.StatusTooManyRequests, 529:
-	default:
-		return
-	}
-
-	settings := st.Settings(ctx)
-	if !settings.Enabled || settings.CooldownSeconds <= 0 {
-		return
-	}
-
-	st.MarkCooldown(
-		account.ID,
-		st.effectiveRequestedModel(ctx, requestedModel),
-		time.Duration(settings.CooldownSeconds)*time.Second,
-	)
 }
 
 func filterActiveOpenAIAccounts(accounts []Account, onlyUngrouped bool) []Account {
 	if len(accounts) == 0 {
 		return nil
 	}
-
 	result := make([]Account, 0, len(accounts))
 	for _, account := range accounts {
 		if account.Platform != PlatformOpenAI || !account.IsActive() {

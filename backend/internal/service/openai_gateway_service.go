@@ -363,8 +363,7 @@ type OpenAIGatewayService struct {
 	openaiAccountStats            *openAIAccountRuntimeStats
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
-	openAIOverLimitUntil                sync.Map // key: string(accountID|model), value: time.Time
-	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
+	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: openAIAccountRuntimeBlock
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64
 	openaiWSRetryMetrics                openAIWSRetryMetrics
@@ -541,33 +540,12 @@ func (s *OpenAIGatewayService) SetSettingService(settingService *SettingService)
 	s.settingService = settingService
 }
 
-func (s *OpenAIGatewayService) openAIOverLimitSettingRepo() SettingRepository {
-	if s == nil {
-		return nil
-	}
-	if s.settingService != nil {
-		return s.settingService.settingRepo
-	}
-	if s.rateLimitService != nil && s.rateLimitService.settingService != nil {
-		return s.rateLimitService.settingService.settingRepo
-	}
-	return nil
-}
-
 func (s *OpenAIGatewayService) getOpenAIOverLimitModeSettings(ctx context.Context) openAIOverLimitModeSettings {
 	return s.openAIOverLimitStrategy().Settings(ctx)
 }
 
-func (s *OpenAIGatewayService) markOpenAIOverLimitCooldown(accountID int64, requestedModel string, cooldown time.Duration) {
-	s.openAIOverLimitStrategy().MarkCooldown(accountID, requestedModel, cooldown)
-}
-
-func (s *OpenAIGatewayService) isOpenAIOverLimitCooldownActive(accountID int64, requestedModel string, now time.Time) bool {
-	return s.openAIOverLimitStrategy().IsCooldownActive(accountID, requestedModel, now)
-}
-
-func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, requestedModel string, settings openAIOverLimitModeSettings) bool {
-	return s.openAIOverLimitStrategy().IsAccountSelectable(account, requestedModel, settings)
+func (s *OpenAIGatewayService) isOpenAIAccountSelectable(ctx context.Context, account *Account, requestedModel string, settings openAIOverLimitModeSettings) bool {
+	return s.openAIOverLimitStrategy().IsAccountSelectable(ctx, account, requestedModel, settings)
 }
 
 func (s *OpenAIGatewayService) isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) bool {
@@ -576,16 +554,8 @@ func (s *OpenAIGatewayService) isOpenAICompatibleAccountEligibleForRequest(ctx c
 	}
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s != nil && platform == PlatformOpenAI && account.Platform == PlatformOpenAI && account.IsOpenAI() && s.getOpenAIOverLimitModeSettings(ctx).Enabled {
-		if !s.isOpenAIAccountSelectable(account, requestedModel, s.getOpenAIOverLimitModeSettings(ctx)) {
-			return false
-		}
-		if paused, reason := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
-			slog.Debug("account_auto_paused_by_quota",
-				"account_id", account.ID,
-				"window", reason.window,
-				"threshold", reason.threshold,
-				"utilization", reason.utilization,
-			)
+		settings := s.getOpenAIOverLimitModeSettings(ctx)
+		if !s.isOpenAIAccountSelectable(ctx, account, requestedModel, settings) {
 			return false
 		}
 		if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
@@ -610,16 +580,8 @@ func (s *OpenAIGatewayService) shouldBypassStickySessionForOpenAIOverLimit(
 	return s.openAIOverLimitStrategy().ShouldBypassStickySession(ctx, groupID, requestedModel, excludedIDs, stickyAccount, requireCompact)
 }
 
-func (s *OpenAIGatewayService) shouldIgnorePreviousResponseForOpenAIOverLimit(ctx context.Context, previousResponseID string) bool {
-	return s.openAIOverLimitStrategy().ShouldIgnorePreviousResponse(ctx, previousResponseID)
-}
-
-func (s *OpenAIGatewayService) shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx context.Context, account *Account, promptCacheKey string) bool {
-	return s.openAIOverLimitStrategy().ShouldPreserveLegacyCacheIdentity(ctx, account, promptCacheKey)
-}
-
-func (s *OpenAIGatewayService) maybeMarkOpenAIOverLimitCooldown(ctx context.Context, account *Account, requestedModel string, statusCode int) {
-	s.openAIOverLimitStrategy().HandleUpstreamError(ctx, account, requestedModel, statusCode)
+func (s *OpenAIGatewayService) shouldIgnorePreviousResponseForOpenAIOverLimit(ctx context.Context, previousResponseID string, previousResponseCanMove bool) bool {
+	return s.openAIOverLimitStrategy().ShouldIgnorePreviousResponse(ctx, previousResponseID, previousResponseCanMove)
 }
 
 func (s *OpenAIGatewayService) billingDeps() *billingDeps {

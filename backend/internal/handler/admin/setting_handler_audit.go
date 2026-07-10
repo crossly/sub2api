@@ -440,6 +440,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIAdvancedSchedulerEnabled != after.OpenAIAdvancedSchedulerEnabled {
 		changed = append(changed, "openai_advanced_scheduler_enabled")
 	}
+	if before.OpenAIOverLimitModeEnabled != after.OpenAIOverLimitModeEnabled {
+		changed = append(changed, service.SettingKeyOpenAIOverLimitModeEnabled)
+	}
+	if before.OpenAIOverLimitCooldownSeconds != after.OpenAIOverLimitCooldownSeconds {
+		changed = append(changed, service.SettingKeyOpenAIOverLimitCooldownSeconds)
+	}
 	if before.OpenAIAdvancedSchedulerStickyWeightedEnabled != after.OpenAIAdvancedSchedulerStickyWeightedEnabled {
 		changed = append(changed, "openai_advanced_scheduler_sticky_weighted_enabled")
 	}

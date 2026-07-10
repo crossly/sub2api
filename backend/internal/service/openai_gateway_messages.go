@@ -161,11 +161,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
 		}
-		preserveLegacyCacheIdentity := s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions: true,
 			PreserveToolCallIDs:     true,
-			PreservePromptCacheKey:  preserveLegacyCacheIdentity,
 		})
 		forcedTemplateText := ""
 		if s.cfg != nil {
@@ -198,11 +196,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
-		if preserveLegacyCacheIdentity {
-			reqBody["prompt_cache_key"] = promptCacheKey
-		} else {
-			delete(reqBody, "prompt_cache_key")
-		}
+		delete(reqBody, "prompt_cache_key")
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
 		}
@@ -280,11 +274,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
 	if promptCacheKey != "" {
-		preserveLegacyCacheIdentity := s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey)
-		isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
-		isolatedSessionID := generateSessionUUID(isolated)
+		isolatedSessionID := generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
-		if upstreamReq.Header.Get("conversation_id") != "" && !preserveLegacyCacheIdentity {
+		if upstreamReq.Header.Get("conversation_id") != "" {
 			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
 		}
 	}
@@ -296,9 +288,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		upstreamReq.Header.Del("OpenAI-Beta")
 		upstreamReq.Header.Del("originator")
 	}
-	if account.Type == AccountTypeOAuth && promptCacheKey != "" &&
-		!s.shouldPreserveLegacyCacheIdentityForOpenAIOverLimit(ctx, account, promptCacheKey) &&
-		strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
+	if account.Type == AccountTypeOAuth && promptCacheKey != "" && strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
 		upstreamReq.Header.Del("conversation_id")
 	}
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
@@ -454,6 +444,8 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		message := openAICompatFailedResponseMessage(finalResponse)
+		s.handleOpenAIStreamFailedAccountState(c, account, payload, message)
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
 				Code:           code,
@@ -470,7 +462,6 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
-		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
 			return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message)
 		}
@@ -798,6 +789,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if strings.TrimSpace(event.Type) == "response.failed" {
 				payloadBytes := []byte(payload)
+				message := extractOpenAISSEErrorMessage(payloadBytes)
+				s.handleOpenAIStreamFailedAccountState(c, account, payloadBytes, message)
 				if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:           code,
@@ -820,7 +813,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					}
 					return true
 				}
-				message := extractOpenAISSEErrorMessage(payloadBytes)
 				if openAIStreamFailedEventShouldFailover(payloadBytes, message) {
 					streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message)
 					return true

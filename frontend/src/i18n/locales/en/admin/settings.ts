@@ -1094,6 +1094,12 @@ export default {
         sourceHint: 'Choose an explicit source before enabling the method. Not configured methods are not exposed.',
         sourceRequiredError: 'Select a payment source before enabling {title}.'
       },
+      openaiOverLimitMode: {
+        title: 'OpenAI 429 over-limit probing',
+        description: 'Periodically retries OpenAI accounts inside an account-level 429 window by priority, then falls back when the probe is still rate limited.',
+        cooldownSeconds: 'Probe interval (seconds)',
+        cooldownSecondsHint: 'Wait 10-300 seconds after each 429 before probing that account again. HTTP 529 keeps its independent overload cooldown policy.'
+      },
       openaiExperimentalScheduler: {
         title: 'OpenAI experimental scheduler policy',
         description: "Disabled by default. When enabled, this only changes the gateway's experimental account-selection policy for OpenAI traffic; it does not indicate an upstream OpenAI capability.",

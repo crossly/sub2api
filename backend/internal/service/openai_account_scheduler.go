@@ -305,7 +305,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
 	if previousResponseID != "" && normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI {
-		if s.service.shouldIgnorePreviousResponseForOpenAIOverLimit(ctx, previousResponseID) {
+		if s.service.shouldIgnorePreviousResponseForOpenAIOverLimit(ctx, previousResponseID, req.PreviousResponseCanMove) {
 			previousResponseID = ""
 		}
 	}
@@ -1039,6 +1039,12 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		if err != nil || account == nil {
 			continue
 		}
+		if s.service.shouldBypassStickySessionForOpenAIOverLimit(ctx, req.GroupID, req.RequestedModel, req.ExcludedIDs, account, req.RequireCompact) {
+			if accountID == req.StickyAccountID && strings.TrimSpace(req.SessionHash) != "" {
+				_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, req.SessionHash)
+			}
+			continue
+		}
 		if !s.isAccountRequestCompatible(ctx, account, req) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 			continue
 		}
@@ -1141,6 +1147,28 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	}
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false)
+	}
+	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI && s.service.getOpenAIOverLimitModeSettings(ctx).Enabled {
+		bestPriority := filtered[0].Priority
+		for _, account := range filtered[1:] {
+			if account.Priority < bestPriority {
+				bestPriority = account.Priority
+			}
+		}
+		priorityFiltered := make([]*Account, 0, len(filtered))
+		priorityLoadReq := make([]AccountWithConcurrency, 0, len(filtered))
+		for _, account := range filtered {
+			if account.Priority != bestPriority {
+				continue
+			}
+			priorityFiltered = append(priorityFiltered, account)
+			priorityLoadReq = append(priorityLoadReq, AccountWithConcurrency{
+				ID:             account.ID,
+				MaxConcurrency: account.EffectiveLoadFactor(),
+			})
+		}
+		filtered = priorityFiltered
+		loadReq = priorityLoadReq
 	}
 
 	loadMap := map[int64]*AccountLoadInfo{}
@@ -1378,11 +1406,19 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
 		return false
 	}
-	// Quota auto-pause must be evaluated during the initial filter too. Without it the
-	// TopK candidate pool can be filled with paused accounts and the later fresh/DB
-	// rechecks won't reach healthy accounts that fell outside TopK — manifesting as
-	// "no available accounts" even though healthy ones exist.
-	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
+	overLimitMode := s != nil && s.service != nil &&
+		normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
+		account.Platform == PlatformOpenAI &&
+		account.IsOpenAI() &&
+		s.service.getOpenAIOverLimitModeSettings(ctx).Enabled
+	if overLimitMode {
+		if !s.service.isOpenAIAccountSelectable(ctx, account, req.RequestedModel, s.service.getOpenAIOverLimitModeSettings(ctx)) {
+			return false
+		}
+	} else if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
+		// Keep quota auto-pause in the initial filter so paused accounts cannot fill
+		// TopK. Over-limit probes use the policy above because the same quota
+		// snapshot is deliberately overridden for globally rate-limited accounts.
 		return false
 	}
 	// 母账号健康联动：影子账号的凭据来自母账号，母账号不可调度时影子也不应被选中。

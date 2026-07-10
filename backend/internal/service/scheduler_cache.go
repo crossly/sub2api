@@ -12,6 +12,10 @@ const (
 	SchedulerModeSingle = "single"
 	SchedulerModeMixed  = "mixed"
 	SchedulerModeForced = "forced"
+	// SchedulerModeOpenAIOverLimit keeps active OpenAI accounts in the snapshot
+	// even while their global rate-limit reset window is still active. Request-time
+	// policy decides whether each account is ready for another probe.
+	SchedulerModeOpenAIOverLimit = "openai_over_limit"
 )
 
 type SchedulerBucket struct {

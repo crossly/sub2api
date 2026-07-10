@@ -485,23 +485,7 @@ func classifyOpenAIWSAcquireError(err error) string {
 }
 
 func isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
-	code := strings.ToLower(strings.TrimSpace(codeRaw))
-	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
-	msg := strings.ToLower(strings.TrimSpace(msgRaw))
-
-	if strings.Contains(errType, "rate_limit") || strings.Contains(errType, "usage_limit") {
-		return true
-	}
-	if strings.Contains(code, "rate_limit") || strings.Contains(code, "usage_limit") || strings.Contains(code, "insufficient_quota") {
-		return true
-	}
-	if strings.Contains(msg, "usage limit") && strings.Contains(msg, "reached") {
-		return true
-	}
-	if strings.Contains(msg, "rate limit") && (strings.Contains(msg, "reached") || strings.Contains(msg, "exceeded")) {
-		return true
-	}
-	return false
+	return isOpenAIRateLimitSignal(codeRaw, errTypeRaw, msgRaw)
 }
 
 func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Context, account *Account, headers http.Header, responseBody []byte, codeRaw, errTypeRaw, msgRaw string) {

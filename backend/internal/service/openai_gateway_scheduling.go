@@ -629,6 +629,10 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	if err != nil {
 		return nil
 	}
+	if s.shouldBypassStickySessionForOpenAIOverLimit(ctx, groupID, requestedModel, excludedIDs, account, requireCompact) {
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		return nil
+	}
 
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
@@ -639,7 +643,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
+	if !s.isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
 		return nil
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
@@ -845,7 +849,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
+				if !clearSticky &&
+					!s.shouldBypassStickySessionForOpenAIOverLimit(ctx, groupID, requestedModel, excludedIDs, account, requireCompact) &&
+					s.isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, platform, requestedModel, requireCompact, requiredCapability)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -908,7 +914,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		// Scheduler snapshots can be temporarily stale (bucket rebuild is throttled);
 		// re-check schedulability here so recently rate-limited/overloaded accounts
 		// are not selected again before the bucket is rebuilt.
-		if !isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) {
+		if !s.isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) {
 			continue
 		}
 		if !parentHealthyForShadow(acc, parentLookupL2) {
@@ -1102,6 +1108,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
+	if s != nil && platform == PlatformOpenAI && s.getOpenAIOverLimitModeSettings(ctx).Enabled {
+		return s.openAIOverLimitStrategy().CandidateAccounts(ctx, groupID)
+	}
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
 		return accounts, err
@@ -1137,13 +1146,20 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 	fresh := account
 	if s.schedulerSnapshot != nil {
 		current, err := s.getSchedulableAccount(ctx, account.ID)
-		if err != nil || current == nil {
+		if err == nil && current != nil {
+			fresh = current
+		} else if platform == PlatformOpenAI && s.getOpenAIOverLimitModeSettings(ctx).Enabled && s.accountRepo != nil {
+			latest, dbErr := s.accountRepo.GetByID(ctx, account.ID)
+			if dbErr != nil || latest == nil {
+				return nil
+			}
+			fresh = latest
+		} else {
 			return nil
 		}
-		fresh = current
 	}
 
-	if !isOpenAICompatibleAccountEligibleForRequest(ctx, fresh, platform, requestedModel, requireCompact, requiredCapability) {
+	if !s.isOpenAICompatibleAccountEligibleForRequest(ctx, fresh, platform, requestedModel, requireCompact, requiredCapability) {
 		return nil
 	}
 	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
@@ -1175,7 +1191,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	}
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.schedulerSnapshot == nil || s.accountRepo == nil {
-		if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) {
+		if !s.isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) {
 			return nil
 		}
 		if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
@@ -1188,7 +1204,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	if err != nil || latest == nil {
 		return nil
 	}
-	if !isOpenAICompatibleAccountEligibleForRequest(ctx, latest, platform, requestedModel, requireCompact, requiredCapability) {
+	if !s.isOpenAICompatibleAccountEligibleForRequest(ctx, latest, platform, requestedModel, requireCompact, requiredCapability) {
 		return nil
 	}
 	if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
@@ -1207,11 +1223,18 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	)
 	if s.schedulerSnapshot != nil {
 		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
+		if (err != nil || account == nil) && s.accountRepo != nil && s.getOpenAIOverLimitModeSettings(ctx).Enabled {
+			account, err = s.accountRepo.GetByID(ctx, accountID)
+		}
 	} else {
 		account, err = s.accountRepo.GetByID(ctx, accountID)
 	}
 	if err != nil || account == nil {
 		return account, err
+	}
+	if account.IsOpenAI() && s.getOpenAIOverLimitModeSettings(ctx).Enabled &&
+		!s.isOpenAIAccountSelectable(ctx, account, "", s.getOpenAIOverLimitModeSettings(ctx)) {
+		return nil, nil
 	}
 	return account, nil
 }
@@ -1222,6 +1245,11 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 	}
 	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
 	if err != nil {
+		if s.accountRepo != nil && account.IsOpenAI() && s.getOpenAIOverLimitModeSettings(ctx).Enabled {
+			if latest, dbErr := s.accountRepo.GetByID(ctx, account.ID); dbErr == nil && latest != nil {
+				return latest, nil
+			}
+		}
 		return nil, err
 	}
 	if hydrated == nil {

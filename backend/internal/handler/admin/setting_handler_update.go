@@ -242,6 +242,8 @@ type UpdateSettingsRequest struct {
 	PaymentVisibleMethodWxpayEnabled  *bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
+	OpenAIOverLimitModeEnabled                         *bool   `json:"openai_over_limit_mode_enabled"`
+	OpenAIOverLimitCooldownSeconds                     *int    `json:"openai_over_limit_cooldown_seconds"`
 	OpenAIAdvancedSchedulerEnabled                     *bool   `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled       *bool   `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled *bool   `json:"openai_advanced_scheduler_subscription_priority_enabled"`
@@ -1423,6 +1425,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.PaymentVisibleMethodWxpayEnabled
 		}(),
+		OpenAIOverLimitModeEnabled: func() bool {
+			if req.OpenAIOverLimitModeEnabled != nil {
+				return *req.OpenAIOverLimitModeEnabled
+			}
+			return previousSettings.OpenAIOverLimitModeEnabled
+		}(),
+		OpenAIOverLimitCooldownSeconds: func() int {
+			if req.OpenAIOverLimitCooldownSeconds != nil {
+				return *req.OpenAIOverLimitCooldownSeconds
+			}
+			return previousSettings.OpenAIOverLimitCooldownSeconds
+		}(),
 		OpenAIAdvancedSchedulerEnabled: func() bool {
 			if req.OpenAIAdvancedSchedulerEnabled != nil {
 				return *req.OpenAIAdvancedSchedulerEnabled
@@ -1824,6 +1838,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodWxpaySource:                        updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:                      updatedSettings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:                       updatedSettings.PaymentVisibleMethodWxpayEnabled,
+		OpenAIOverLimitModeEnabled:                             updatedSettings.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:                         updatedSettings.OpenAIOverLimitCooldownSeconds,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           updatedSettings.OpenAIAdvancedSchedulerStickyWeightedEnabled,
 		OpenAIAdvancedSchedulerSubscriptionPriorityEnabled:     updatedSettings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled,

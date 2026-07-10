@@ -206,6 +206,54 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
+func TestSettingHandler_UpdateSettings_OpenAIOverLimitRoundTripAndPreserve(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingKeyPromoCodeEnabled:               "true",
+			service.SettingKeyOpenAIOverLimitModeEnabled:     "false",
+			service.SettingKeyOpenAIOverLimitCooldownSeconds: "",
+		},
+	}
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+
+	update := func(body map[string]any) map[string]any {
+		t.Helper()
+		rawBody, err := json.Marshal(body)
+		require.NoError(t, err)
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+		c.Request.Header.Set("Content-Type", "application/json")
+		handler.UpdateSettings(c)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var resp response.Response
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		data, ok := resp.Data.(map[string]any)
+		require.True(t, ok)
+		return data
+	}
+
+	data := update(map[string]any{
+		"promo_code_enabled":                 true,
+		"openai_over_limit_mode_enabled":     true,
+		"openai_over_limit_cooldown_seconds": 45,
+	})
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAIOverLimitModeEnabled])
+	require.Equal(t, "45", repo.values[service.SettingKeyOpenAIOverLimitCooldownSeconds])
+	require.Equal(t, true, data["openai_over_limit_mode_enabled"])
+	require.Equal(t, float64(45), data["openai_over_limit_cooldown_seconds"])
+
+	data = update(map[string]any{"promo_code_enabled": false})
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAIOverLimitModeEnabled])
+	require.Equal(t, "45", repo.values[service.SettingKeyOpenAIOverLimitCooldownSeconds])
+	require.Equal(t, true, data["openai_over_limit_mode_enabled"])
+	require.Equal(t, float64(45), data["openai_over_limit_cooldown_seconds"])
+}
+
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{

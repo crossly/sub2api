@@ -1054,6 +1054,12 @@ func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, accoun
 }
 
 func (s *RateLimitService) get429FallbackCooldown(ctx context.Context, account *Account) (time.Duration, bool) {
+	if account != nil && account.IsOpenAI() && s.settingService != nil {
+		overLimit := s.settingService.getOpenAIOverLimitModeSettings(ctx)
+		if overLimit.Enabled {
+			return time.Duration(overLimit.CooldownSeconds) * time.Second, true
+		}
+	}
 	if s.settingService != nil {
 		settings, err := s.settingService.GetRateLimit429CooldownSettings(ctx)
 		if err == nil && settings != nil {
@@ -1468,9 +1474,11 @@ func parseOpenAIRateLimitResetTime(body []byte) *int64 {
 		return nil
 	}
 
-	// 检查是否为 usage_limit_reached 或 rate_limit_exceeded 类型
+	// 检查错误类型、错误码和消息，兼容 HTTP 与流式 response.failed 的变体。
 	errType, _ := errObj["type"].(string)
-	if errType != "usage_limit_reached" && errType != "rate_limit_exceeded" {
+	errCode, _ := errObj["code"].(string)
+	errMessage, _ := errObj["message"].(string)
+	if !isOpenAIRateLimitSignal(errCode, errType, errMessage) {
 		return nil
 	}
 
@@ -1512,7 +1520,9 @@ func parseOpenAIRateLimitPlanType(body []byte) string {
 	}
 
 	errType, _ := errObj["type"].(string)
-	if errType != "usage_limit_reached" && errType != "rate_limit_exceeded" {
+	errCode, _ := errObj["code"].(string)
+	errMessage, _ := errObj["message"].(string)
+	if !isOpenAIRateLimitSignal(errCode, errType, errMessage) {
 		return ""
 	}
 

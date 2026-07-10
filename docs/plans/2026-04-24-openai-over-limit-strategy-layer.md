@@ -1,139 +1,104 @@
-# OpenAI Over-Limit Strategy Layer Implementation Plan
+# OpenAI 429 Over-Limit Strategy on v0.1.150
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+## Baseline
 
-**Goal:** Refactor the current `116` OpenAI over-limit logic into an independent strategy layer that preserves the `112` routing semantics while minimizing future merge conflicts with upstream.
+This implementation is designed against the unmodified upstream `v0.1.150`
+architecture. Older implementations are behavioral history only; their
+account/model cooldown map, request identity rewrites, and scheduler query
+paths are not part of this design.
 
-**Architecture:** Introduce a small strategy object that owns over-limit settings, short-cooldown state, candidate-pool broadening, sticky/session bypass rules, and upstream `429/529` cooldown side effects. The gateway and advanced scheduler should stop open-coding over-limit behavior and instead call a few focused hooks. The policy remains OpenAI-specific, but the implementation becomes isolated from the large routing functions.
+## Required Behavior
 
-**Tech Stack:** Go, `testing`, existing `OpenAIGatewayService`, existing scheduler/load-awareness code paths, repo-local docs in `docs/plans`.
+1. A lower numeric account priority remains preferred.
+2. An OpenAI account inside a global 429 reset window may be probed again only
+   after the configured probe interval.
+3. If that probe returns 429, the current request excludes that account and
+   falls back to another eligible account.
+4. Hard account state still wins: disabled, expired, temp-unschedulable,
+   overloaded, unsupported-model, model-rate-limited, and unusable API-key
+   quota states are never bypassed.
+5. HTTP 529 and transport failures keep their independent cooldown policies.
+6. The mode changes scheduling and account state only. It does not rewrite
+   `prompt_cache_key`, `conversation_id`, or Codex request identity.
 
-### Task 1: Lock the 112 contract into red tests
+## Architecture
 
-**Files:**
-- Modify: `backend/internal/service/openai_over_limit_mode_test.go`
-- Create: `backend/internal/service/openai_over_limit_strategy_test.go`
+### Settings
 
-**Step 1: Write the failing test**
+`openAIOverLimitStrategy.Settings` reads the two existing settings through a
+per-`SettingService` cache:
 
-Add contract tests for:
-- over-limit mode widens the candidate pool beyond repo/snapshot schedulable filtering
-- active short cooldown suppresses immediate reuse of a rate-limited account
-- sticky session fallback is bypassed when a higher-priority rate-limited account is eligible
-- `previous_response_id` routing is neutralized when over-limit mode needs to pick from the broader pool
+- `openai_over_limit_mode_enabled`
+- `openai_over_limit_cooldown_seconds`
 
-**Step 2: Run test to verify it fails**
+The interval is normalized to 10-300 seconds while enabled. A settings update
+refreshes the in-process value immediately; normal reads use a five-second
+cache to keep the scheduling hot path off the database.
 
-Run: `go test ./internal/service -run 'OpenAIOverLimit' -count=1`
-Expected: FAIL on the new strategy-contract test(s) before implementation exists.
+### Candidate snapshot
 
-**Step 3: Commit**
+`SchedulerModeOpenAIOverLimit` owns a dedicated scheduler bucket. The bucket
+contains active OpenAI accounts even when their global 429 reset window is
+active. Current account data is still hydrated from scheduler account metadata
+on each read.
 
-```bash
-git add backend/internal/service/openai_over_limit_mode_test.go backend/internal/service/openai_over_limit_strategy_test.go
-git commit -m "test: lock openai over-limit strategy contract"
-```
+The bucket participates in:
 
-### Task 2: Extract settings/state/policy into a strategy layer
+- startup/default rebuilds
+- full rebuilds
+- account and group outbox rebuilds
+- database fallback
+- simple and standard run modes
 
-**Files:**
-- Create: `backend/internal/service/openai_over_limit_strategy.go`
-- Modify: `backend/internal/service/openai_gateway_service.go`
-- Modify: `backend/internal/service/setting_service.go`
+This avoids a database scan on every request while preserving current account
+state at selection time.
 
-**Step 1: Write the failing test**
+### Request-time eligibility
 
-Add or extend tests so they construct the strategy through `OpenAIGatewayService` and assert:
-- cooldown normalization still falls back to `10`
-- strategy state uses account+model cooldown keys
-- selection policy treats long upstream rate limit and short local cooldown as separate concerns
+`openAIOverLimitStrategy.IsAccountSelectable` starts from the upstream v150
+hard gates and relaxes exactly one condition: an active account-level 429
+window. Such an account is selectable only after
+`RateLimitedAt + probe interval`.
 
-**Step 2: Run test to verify it fails**
+The stale quota auto-pause snapshot associated with that same global 429 is
+ignored for the probe. Independent model limits and all other hard gates remain
+active.
 
-Run: `go test ./internal/service -run 'OpenAIOverLimit|ParseSettings_OpenAIOverLimitMode' -count=1`
-Expected: FAIL because the new strategy helper and hook wiring do not exist yet.
+### Runtime circuit state
 
-**Step 3: Write minimal implementation**
+The in-process block stores independent fields for:
 
-Implement:
-- strategy settings loader wrapper around existing setting service
-- short-cooldown state helpers
-- candidate-pool broadening helper
-- account selectability helper
-- sticky/previous-response bypass helper
-- upstream `429/529` cooldown side-effect helper
+- hard block deadline and reason
+- 429 observation time and reset deadline
 
-**Step 4: Run test to verify it passes**
+Hard blocks always win. In normal mode, a 429 blocks until its full reset. In
+over-limit mode, it blocks until the next probe interval. Keeping these fields
+separate prevents a later 429 from shortening or overwriting auth, transport,
+529, or other hard blocks.
 
-Run: `go test ./internal/service -run 'OpenAIOverLimit|ParseSettings_OpenAIOverLimitMode' -count=1`
-Expected: PASS
+### 429 signal ingestion
 
-### Task 3: Rewire gateway and scheduler through 3 hook points
+HTTP, SSE, and WebSocket paths share one OpenAI rate-limit classifier. It
+recognizes rate/usage limit types and codes, insufficient quota, quota exceeded,
+and equivalent messages.
 
-**Files:**
-- Modify: `backend/internal/service/openai_gateway_service.go`
-- Modify: `backend/internal/service/openai_account_scheduler.go`
+SSE `response.failed` handling persists the account state before passthrough or
+client-output decisions. This includes native Responses, passthrough,
+Chat Completions, Anthropic Messages, and non-streaming SSE-to-JSON bridges.
+Reset metadata is preserved when the nested `response.error` is normalized.
 
-**Step 1: Write the failing test**
+`/v1/messages/count_tokens` uses the same exclusion-and-reschedule loop as the
+other gateway handlers, so a 429 can switch accounts before any response body
+is written.
 
-Add or update focused tests for these hooks:
-- candidate-source hook: scheduler/load-awareness can see broad over-limit candidates
-- sticky hook: sticky or `previous_response_id` path is bypassed when strategy says so
-- upstream error hook: failover/compat/passthrough responses record short cooldown through strategy
-
-**Step 2: Run test to verify it fails**
-
-Run: `go test ./internal/service -run 'SelectAccountWithScheduler|HandleFailoverSideEffects|HandleCompatErrorResponse' -count=1`
-Expected: FAIL until the hooks call the extracted strategy.
-
-**Step 3: Write minimal implementation**
-
-Keep the hook surface small:
-- `strategy.CandidateAccounts(...)`
-- `strategy.ShouldBypassSticky(...)` / `strategy.ShouldIgnorePreviousResponse(...)`
-- `strategy.HandleUpstreamError(...)`
-
-**Step 4: Run test to verify it passes**
-
-Run: `go test ./internal/service -run 'SelectAccountWithScheduler|HandleFailoverSideEffects|HandleCompatErrorResponse' -count=1`
-Expected: PASS
-
-### Task 4: Add merge documentation for future upstream syncs
-
-**Files:**
-- Create: `docs/plans/2026-04-24-openai-over-limit-merge-playbook.md`
-
-**Step 1: Write the file**
-
-Document:
-- the 112 business contract we must preserve
-- the exact 3 hook points
-- where upstream changes are most likely to land
-- what tests must be rerun after future merges
-
-**Step 2: Verify file exists**
-
-Run: `sed -n '1,220p' docs/plans/2026-04-24-openai-over-limit-merge-playbook.md`
-Expected: shows the preserved contract and merge checklist.
-
-### Task 5: Full verification
-
-**Files:**
-- Verify only
-
-**Step 1: Run targeted service tests**
-
-Run: `go test ./internal/service -run 'OpenAIOverLimit|SelectAccountWithScheduler|HandleFailoverSideEffects|HandleCompatErrorResponse' -count=1`
-Expected: PASS
-
-**Step 2: Run related server/settings regressions**
-
-Run: `go test ./internal/service ./internal/server -count=1`
-Expected: PASS
-
-**Step 3: Commit**
+## Verification
 
 ```bash
-git add backend/internal/service/openai_gateway_service.go backend/internal/service/openai_account_scheduler.go backend/internal/service/openai_over_limit_mode_test.go backend/internal/service/openai_over_limit_strategy.go backend/internal/service/openai_over_limit_strategy_test.go backend/internal/service/setting_service.go docs/plans/2026-04-24-openai-over-limit-strategy-layer.md docs/plans/2026-04-24-openai-over-limit-merge-playbook.md
-git commit -m "refactor: isolate openai over-limit strategy"
+cd backend
+go test ./internal/service \
+  -run 'OpenAIOverLimit|OverLimitV150|ForwardCountTokensAsAnthropic_429ReturnsFailoverBeforeWriting|StreamFailedRateLimitPersistsNextProbeTime' \
+  -count=1
+go test -tags=unit ./internal/handler \
+  -run 'OpenAIGatewayHandlerCountTokens_OverLimit429FallsBackToHealthyAccount' \
+  -count=1
 ```

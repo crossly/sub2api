@@ -214,6 +214,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
 		SettingPaymentVisibleMethodWxpayEnabled:                      "false",
 		openAIAdvancedSchedulerSettingKey:                            "false",
+		SettingKeyOpenAIOverLimitModeEnabled:                         "false",
+		SettingKeyOpenAIOverLimitCooldownSeconds:                     "",
 		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "false",
 		SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled: "false",
 		SettingKeyOpenAIAdvancedSchedulerLBTopK:                      "",
@@ -788,6 +790,14 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
+	result.OpenAIOverLimitModeEnabled = settings[SettingKeyOpenAIOverLimitModeEnabled] == "true"
+	if v, err := strconv.Atoi(strings.TrimSpace(settings[SettingKeyOpenAIOverLimitCooldownSeconds])); err == nil && v > 0 {
+		result.OpenAIOverLimitCooldownSeconds = v
+	}
+	result.OpenAIOverLimitCooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(
+		result.OpenAIOverLimitModeEnabled,
+		result.OpenAIOverLimitCooldownSeconds,
+	)
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
 	result.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled = settings[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] == "true"
 	result.OpenAIAdvancedSchedulerLBTopK = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerLBTopK])

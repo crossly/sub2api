@@ -1089,6 +1089,12 @@ export default {
         sourceHint: '启用后必须明确选择一个来源；未配置状态不会对外展示该支付方式。',
         sourceRequiredError: '{title} 已启用，请先选择支付来源。'
       },
+      openaiOverLimitMode: {
+        title: 'OpenAI 429 超限探测',
+        description: '允许处于账号级 429 限流窗口的 OpenAI 账号按优先级定期重试；仍返回 429 时自动切换到下一账号。',
+        cooldownSeconds: '重试间隔（秒）',
+        cooldownSecondsHint: '每次 429 后等待指定时间再探测该账号，范围 10-300 秒。529 继续使用独立的过载冷却策略。'
+      },
       openaiExperimentalScheduler: {
         title: 'OpenAI 实验调度策略',
         description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。',

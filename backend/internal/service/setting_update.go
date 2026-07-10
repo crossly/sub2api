@@ -381,6 +381,16 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
+	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
+	openAIOverLimitCooldownSeconds := normalizeOpenAIOverLimitCooldownSeconds(
+		settings.OpenAIOverLimitModeEnabled,
+		settings.OpenAIOverLimitCooldownSeconds,
+	)
+	if openAIOverLimitCooldownSeconds > 0 {
+		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(openAIOverLimitCooldownSeconds)
+	} else {
+		updates[SettingKeyOpenAIOverLimitCooldownSeconds] = ""
+	}
 	updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerStickyWeightedEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerLBTopK] = settings.OpenAIAdvancedSchedulerLBTopK
@@ -556,6 +566,10 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 			SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:    settings.OpenAIAdvancedSchedulerWeightSessionSticky,
 		}),
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
+	})
+	s.setOpenAIOverLimitModeSettings(openAIOverLimitModeSettings{
+		Enabled:         settings.OpenAIOverLimitModeEnabled,
+		CooldownSeconds: settings.OpenAIOverLimitCooldownSeconds,
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be

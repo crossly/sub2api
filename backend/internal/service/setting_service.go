@@ -70,6 +70,12 @@ type SettingService struct {
 	// instance owns its own cache, no shared package-level state.
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
+
+	// OpenAI over-limit mode is read on every scheduling pass. Keep the cache
+	// per SettingService so tests and multiple service instances do not share state.
+	openAIOverLimitSettingsCache   atomic.Value // *cachedOpenAIOverLimitModeSettings
+	openAIOverLimitSettingsSF      singleflight.Group
+	openAIOverLimitSettingsVersion atomic.Uint64
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

@@ -3,17 +3,13 @@ package service
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -43,6 +39,10 @@ func (r *openAIOverLimitRateLimitRepoStub) SetRateLimited(_ context.Context, id 
 	r.lastRateLimitID = id
 	r.lastRateLimitReset = resetAt
 	return nil
+}
+
+func (r *openAIOverLimitRateLimitRepoStub) BulkUpdate(_ context.Context, ids []int64, _ AccountBulkUpdate) (int64, error) {
+	return int64(len(ids)), nil
 }
 
 func newOpenAIOverLimitSettingsRepoStub(enabled bool, cooldownSeconds int) *openAIOverLimitSettingsRepoStub {
@@ -157,19 +157,11 @@ func (r productionLikeOpenAIOverLimitRepoStub) ListByPlatform(ctx context.Contex
 
 func newOpenAIOverLimitSettingServiceForTest(t *testing.T, enabled bool, cooldownSeconds int) *SettingService {
 	t.Helper()
-	openAIOverLimitSettingsCache = atomic.Value{}
-	t.Cleanup(func() {
-		openAIOverLimitSettingsCache = atomic.Value{}
-	})
 	return NewSettingService(newOpenAIOverLimitSettingsRepoStub(enabled, cooldownSeconds), &config.Config{})
 }
 
 func newOpenAIOverLimitSettingServiceWithValuesForTest(t *testing.T, values map[string]string) *SettingService {
 	t.Helper()
-	openAIOverLimitSettingsCache = atomic.Value{}
-	t.Cleanup(func() {
-		openAIOverLimitSettingsCache = atomic.Value{}
-	})
 	repo := &openAIOverLimitSettingsRepoStub{values: map[string]string{}}
 	for key, value := range values {
 		repo.values[key] = value
@@ -248,6 +240,7 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_OpenAIOverLimit
 
 func TestOpenAIGatewayService_GetSchedulableAccount_OpenAIOverLimitModeSkipsActiveShortCooldown(t *testing.T) {
 	ctx := context.Background()
+	rateLimitedAt := time.Now()
 	rateLimitedUntil := time.Now().Add(30 * time.Minute)
 	account := Account{
 		ID:               43001,
@@ -257,6 +250,7 @@ func TestOpenAIGatewayService_GetSchedulableAccount_OpenAIOverLimitModeSkipsActi
 		Schedulable:      true,
 		Concurrency:      1,
 		Priority:         0,
+		RateLimitedAt:    &rateLimitedAt,
 		RateLimitResetAt: &rateLimitedUntil,
 	}
 
@@ -265,7 +259,6 @@ func TestOpenAIGatewayService_GetSchedulableAccount_OpenAIOverLimitModeSkipsActi
 		cfg:         &config.Config{},
 	}
 	svc.SetSettingService(newOpenAIOverLimitSettingServiceForTest(t, true, 10))
-	svc.markOpenAIOverLimitCooldown(account.ID, "", time.Minute)
 
 	got, err := svc.getSchedulableAccount(ctx, account.ID)
 	require.NoError(t, err)
@@ -503,7 +496,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBatchOverLimitUsesR
 	require.Equal(t, primary.ID, selection.Account.ID)
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeFallsBackToDBWhenRateLimitedAccountMissingFromSnapshot(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeUsesDedicatedSnapshotWithoutPerRequestDBScan(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(51116)
 	rateLimitedUntil := time.Now().Add(30 * time.Minute)
@@ -569,7 +562,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OverLimitModeFallsBackT
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, primary.ID, selection.Account.ID)
+	require.Equal(t, backup.ID, selection.Account.ID)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesStickyFallbackAccount(t *testing.T) {
@@ -719,7 +712,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeDoes
 	require.Equal(t, openAIAccountScheduleLayerSessionSticky, decision.Layer)
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypassesPreviousResponseFallbackAccount(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeOnlyBypassesMovablePreviousResponse(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(51131)
 	rateLimitedUntil := time.Now().Add(30 * time.Minute)
@@ -765,14 +758,21 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{primary, backup}},
 		cache:              &schedulerTestGatewayCache{},
 		cfg:                cfg,
+		rateLimitService:   &RateLimitService{settingService: settingService},
 		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 		openaiWSStateStore: store,
 	}
 	svc.SetSettingService(settingService)
 
 	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_over_limit_backup", backup.ID, time.Hour))
+	require.False(t, svc.shouldIgnorePreviousResponseForOpenAIOverLimit(ctx, "resp_prev_over_limit_backup", false))
+	resolvedID, resolvedAccount, _, _ := svc.resolveAccountByPreviousResponseIDForCapability(
+		ctx, &groupID, "resp_prev_over_limit_backup", "gpt-5.1", nil, OpenAIEndpointCapabilityChatCompletions, false,
+	)
+	require.Equal(t, backup.ID, resolvedID)
+	require.NotNil(t, resolvedAccount)
 
-	selection, decision, err := svc.SelectAccountWithScheduler(
+	selection, decision, err := svc.SelectAccountWithSchedulerForCapability(
 		ctx,
 		&groupID,
 		"resp_prev_over_limit_backup",
@@ -780,7 +780,33 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		OpenAIEndpointCapabilityChatCompletions,
 		false,
+		false,
+		PlatformOpenAI,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, backup.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
+	require.True(t, decision.StickyPreviousHit)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+
+	selection, decision, err = svc.SelectAccountWithSchedulerForCapability(
+		ctx,
+		&groupID,
+		"resp_prev_over_limit_backup",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		OpenAIEndpointCapabilityChatCompletions,
+		false,
+		true,
+		PlatformOpenAI,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -793,6 +819,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_OpenAIOverLimitModeBypa
 func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsActiveOpenAIOverLimitShortCooldown(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(52001)
+	rateLimitedAt := time.Now()
 	rateLimitedUntil := time.Now().Add(30 * time.Minute)
 	primary := Account{
 		ID:               52001,
@@ -802,6 +829,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		Schedulable:      true,
 		Concurrency:      1,
 		Priority:         0,
+		RateLimitedAt:    &rateLimitedAt,
 		RateLimitResetAt: &rateLimitedUntil,
 		GroupIDs:         []int64{groupID},
 	}
@@ -831,7 +859,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 	}
 	svc.SetSettingService(settingService)
-	svc.markOpenAIOverLimitCooldown(primary.ID, "gpt-5.1", time.Minute)
 
 	selection, _, err := svc.SelectAccountWithScheduler(
 		ctx,
@@ -847,35 +874,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedSchedulerSkipsA
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
 	require.Equal(t, backup.ID, selection.Account.ID)
-}
-
-func TestOpenAIGatewayService_HandleFailoverSideEffects_MarksOpenAIOverLimitCooldown(t *testing.T) {
-	ctx := context.WithValue(context.Background(), ctxkey.Model, "gpt-5.1")
-	account := &Account{
-		ID:          53001,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-	}
-
-	settingService := newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
-		SettingKeyOpenAIOverLimitModeEnabled:     "true",
-		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
-	})
-	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	svc.SetSettingService(settingService)
-
-	resp := &http.Response{
-		StatusCode: http.StatusTooManyRequests,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"error":"rate limited"}`)),
-	}
-
-	svc.handleFailoverSideEffects(ctx, resp, account, []byte(`{"error":"rate limited"}`), "gpt-5.1")
-
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
-	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
 }
 
 func TestOpenAIGatewayService_GetOpenAIOverLimitModeSettings_NormalizesCooldownToTenWhenEnabled(t *testing.T) {
@@ -918,67 +916,7 @@ func TestOpenAIGatewayService_GetOpenAIOverLimitModeSettings_NormalizesCooldownT
 	}
 }
 
-func TestOpenAIGatewayService_HandleCompatErrorResponse_MarksOpenAIOverLimitCooldown(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-
-	account := &Account{
-		ID:          54001,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-	}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
-		SettingKeyOpenAIOverLimitModeEnabled:     "true",
-		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
-	}))
-	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Model, "gpt-5.1"))
-
-	resp := &http.Response{
-		StatusCode: http.StatusTooManyRequests,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
-	}
-
-	_, err := svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
-
-	require.Error(t, err)
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
-	require.False(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-4.1", time.Now()))
-}
-
-func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotApplyLongRuntimeBlockOn429(t *testing.T) {
-	ctx := context.Background()
-	account := &Account{
-		ID:          55001,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-	}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	svc.SetSettingService(newOpenAIOverLimitSettingServiceWithValuesForTest(t, map[string]string{
-		SettingKeyOpenAIOverLimitModeEnabled:     "true",
-		SettingKeyOpenAIOverLimitCooldownSeconds: "12",
-	}))
-
-	headers := make(http.Header)
-	headers.Set("x-ratelimit-reset-requests", strconv.FormatInt(time.Now().Add(30*time.Minute).Unix(), 10))
-
-	svc.maybeMarkOpenAIOverLimitCooldown(ctx, account, "gpt-5.1", http.StatusTooManyRequests)
-	svc.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, []byte(`{"error":{"message":"rate limited"}}`), "gpt-5.1")
-
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
-	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-}
-
-func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotRuntimeBlockViaRateLimitService429(t *testing.T) {
+func TestOpenAIGatewayService_OpenAIOverLimitModeAppliesRuntimeProbeIntervalViaRateLimitService429(t *testing.T) {
 	ctx := context.Background()
 	account := &Account{
 		ID:          55002,
@@ -1008,15 +946,13 @@ func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotRuntimeBlockViaRateLimit
 	resetAt := time.Now().Add(30 * time.Minute).Unix()
 	body := []byte(`{"error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAt, 10) + `}}`)
 
-	svc.maybeMarkOpenAIOverLimitCooldown(ctx, account, "gpt-5.1", http.StatusTooManyRequests)
 	shouldDisable := svc.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, http.Header{}, body, "gpt-5.1")
 
 	require.False(t, shouldDisable)
 	require.Equal(t, 1, repo.rateLimitCalls)
 	require.Equal(t, account.ID, repo.lastRateLimitID)
 	require.WithinDuration(t, time.Unix(resetAt, 0), repo.lastRateLimitReset, 2*time.Second)
-	require.True(t, svc.isOpenAIOverLimitCooldownActive(account.ID, "gpt-5.1", time.Now()))
-	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotStopFailoverDuringOAuth429Storm(t *testing.T) {
@@ -1033,7 +969,7 @@ func TestOpenAIGatewayService_OpenAIOverLimitModeDoesNotStopFailoverDuringOAuth4
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 1))
 }
 
-func TestOpenAIGatewayService_ForwardAsAnthropicOverLimitModePreservesLegacyCacheIdentity(t *testing.T) {
+func TestOpenAIGatewayService_ForwardAsAnthropicOverLimitModeKeepsV150CacheIdentityRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_overlimit_legacy_messages", "gpt-5.5")}
@@ -1069,13 +1005,13 @@ func TestOpenAIGatewayService_ForwardAsAnthropicOverLimitModePreservesLegacyCach
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "stable-cache-key", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	isolated := isolateOpenAISessionID(0, "stable-cache-key")
 	require.Equal(t, generateSessionUUID(isolated), upstream.lastReq.Header.Get("session_id"))
-	require.Equal(t, isolated, upstream.lastReq.Header.Get("conversation_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
 }
 
-func TestOpenAIGatewayService_ForwardOverLimitMessagesBridgePreservesLegacyCacheIdentity(t *testing.T) {
+func TestOpenAIGatewayService_ForwardOverLimitMessagesBridgeKeepsV150CacheIdentityRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	originalBody := []byte(`{"model":"gpt-5.5","stream":true,"prompt_cache_key":"anthropic-metadata-session-1","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"<sub2api-claude-code-todo-guard>"}]},{"type":"message","role":"user","content":"hello"}]}`)
@@ -1111,8 +1047,8 @@ func TestOpenAIGatewayService_ForwardOverLimitMessagesBridgePreservesLegacyCache
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "anthropic-metadata-session-1", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	isolated := isolateOpenAISessionID(0, "anthropic-metadata-session-1")
 	require.Equal(t, isolated, upstream.lastReq.Header.Get("session_id"))
-	require.Equal(t, isolated, upstream.lastReq.Header.Get("conversation_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
 }

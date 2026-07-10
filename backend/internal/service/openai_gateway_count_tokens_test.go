@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ type countTokensRuntimeStateRepo struct {
 	AccountRepository
 	tempUnschedCalls int
 	setErrorCalls    int
+	rateLimitedCalls int
 }
 
 func (r *countTokensRuntimeStateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
@@ -35,6 +37,56 @@ func (r *countTokensRuntimeStateRepo) SetTempUnschedulable(_ context.Context, _ 
 func (r *countTokensRuntimeStateRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrorCalls++
 	return nil
+}
+
+func (r *countTokensRuntimeStateRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
+	r.rateLimitedCalls++
+	return nil
+}
+
+func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_429ReturnsFailoverBeforeWriting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"usage_limit_reached","message":"rate limited"}}`)),
+	}}
+	repo := &countTokensRuntimeStateRepo{}
+	settingService := newOpenAIOverLimitSettingServiceForTest(t, true, 10)
+	rateLimitService := &RateLimitService{accountRepo: repo, cfg: &config.Config{}, settingService: settingService}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+			Enabled:           false,
+			AllowInsecureHTTP: true,
+		}}},
+		httpUpstream:     upstream,
+		rateLimitService: rateLimitService,
+		settingService:   settingService,
+	}
+	account := &Account{
+		ID:          404,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "http://upstream.example"},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "gpt-5.3-codex")
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr), "err=%T %v", err, err)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Empty(t, rec.Body.String())
+	require.Equal(t, 1, repo.rateLimitedCalls)
 }
 
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesInputTokens(t *testing.T) {
