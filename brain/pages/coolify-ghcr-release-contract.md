@@ -5,7 +5,7 @@ category: decision
 status: active
 tags: [coolify, ghcr, release, deployment]
 created: "2026-07-10T20:50:27"
-updated: "2026-07-22T10:50:28"
+updated: "2026-07-22T11:09:11"
 ---
 
 ## compiled_truth
@@ -73,3 +73,15 @@ release tag 指向发布代码提交，而默认分支随后可能多一个纯 V
   summary: "Coolify compose 已覆盖上游环境入口并同步 PostgreSQL/Redis 命令修复，YAML 解析通过"
   source: "docker-compose.coolify.yml；upstream v0.1.162 compose comparison"
   affects: [coolify-ghcr-release-contract]
+
+- time: 2026-07-22T10:54:20
+  kind: decision
+  summary: "用户指定 merge commit e876a0f0c 为 fork v0.1.162 的 tag 与 release 发布点"
+  source: "用户请求 2026-07-22"
+  affects: [coolify-ghcr-release-contract, fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T11:09:11
+  kind: evidence
+  summary: "fork v0.1.162 已发布；GHCR 0.1.162 与 latest 同指向双架构 manifest sha256:297206a026bfcd3122ed695ee3f3bd1f9b5fef249ef26f6f6368837e3b3231a2"
+  source: "tag e876a0f0c；Release run 29887063511；GitHub Release v0.1.162；GHCR Registry API"
+  affects: [coolify-ghcr-release-contract, fork-upstream-merge-boundaries]
