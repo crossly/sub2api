@@ -5,41 +5,57 @@ category: decision
 status: active
 tags: [fork, upstream, merge, maintenance]
 created: "2026-07-10T20:50:26"
-updated: "2026-07-10T20:50:26"
+updated: "2026-07-22T10:50:28"
 ---
 
 ## compiled_truth
 
 ## 决策
 
-本仓库是 `Wei-Shaw/sub2api` 的维护型 fork。主线通过合并上游 release/tag 获取主体架构和功能，本地差异按独立 overlay 保留，不把整个 fork 当作脱离上游的长期分叉。
+本仓库是 `Wei-Shaw/sub2api` 的维护型 fork。当前代码基线为上游 `v0.1.162`（`27f094e09`）加少量本地 overlay。主线通过合并上游 release/tag 获取架构、安全修复和业务功能，不把 fork 演变成独立产品分支。
 
-截至 2026-07-10，当前代码基线是上游 `v0.1.150` 加本地 `v0.1.150.1`。后续合并必须从新上游版本的实际架构重新审视 hook 点，尤其不能把 `v0.1.126` 的 429 实现直接搬到新版本。
+应用层长期保留的本地 overlay 仅有两类：
 
-## 本地长期边界
+- Coolify 部署与自有 GHCR 发布，见 [[coolify-ghcr-release-contract]]。
+- OINANCE 品牌、主题、首页和响应式 UI，见 [[local-branding-ui-overlay]]。
 
-- OpenAI 429 超限探测与 failover 由 [[openai-429-over-limit-routing]] 维护。
-- Coolify 部署和自有 GHCR 发布由 [[coolify-ghcr-release-contract]] 维护。
-- 品牌、主题、首页和响应式 UI 由 [[local-branding-ui-overlay]] 维护。
-- OpenAI OAuth 账号导入与测试前刷新由 [[openai-oauth-onboarding-compat]] 维护。
-- `deploy/docker-compose*.yml` 保持上游版本；Coolify 特有配置只放在仓库根部 `docker-compose.coolify.yml`。
-- 上游拥有网关主体、provider adapter、数据库模型、支付、监控和邮件模块的总体演进方向。
+Project Brain 文件是维护知识，不属于运行时功能 overlay。
+
+## 上游所有权
+
+除上述两类外，后端和前端功能均以上游目标版本为准，包括：
+
+- OpenAI 429、账号调度、sticky、failover、runtime block 和设置界面。
+- OpenAI OAuth、账号导入、连接测试、token refresh 和 Codex 兼容。
+- provider adapter、HTTP/SSE/WebSocket transport、模型能力和错误映射。
+- 数据库模型、计费、支付、监控、安全审计、异步图片、邮件和通知模块。
+- `Dockerfile`、`deploy/docker-compose*.yml` 及上游标准部署文件。
+
+历史本地 429、OAuth converter/test-refresh 和 legacy email overlay 已退役，不在后续上游合并中重放。
+
+## 当前允许的代码差异
+
+相对上游 tag，运行时代码差异只应出现在：
+
+- 根目录 `docker-compose.coolify.yml`。
+- 品牌 logo、Tailwind token、landing locale、首页、认证背景、看板图表和响应式 shell/test。
+- `.gitignore` 中允许版本控制 Project Brain 的规则。
+
+`BRAIN.md`、`AGENTS.md` 和 `brain/` 是项目维护资料。任何其他运行时代码差异都需要明确的新决策。
 
 ## 合并原则
 
-1. 先确认新上游 tag 的实际运行路径和合并提交第二父节点。
-2. 按功能桶检查本地 delta，不用一个旧补丁覆盖新的 scheduler、handler 或 transport。
-3. 先完成上游合并，再逐个恢复 Coolify、品牌、OAuth 和 429 overlay；429 最后处理并做端到端回归。
-4. 对 scheduler membership、request-time eligibility、SSE/WebSocket 错误路径、重试 exclusion set 和设置 API 做专项审计。
-5. 合并后必须跑后端 unit/integration、`golangci-lint`、前端 typecheck/critical vitest 和 release workflow。
+1. 获取并验证目标上游 tag 的 commit，确认与当前分支的 merge-base。
+2. 先合并目标 tag；业务代码冲突默认采用上游版本。
+3. 只对 Coolify/GHCR 与品牌 UI 两个功能桶恢复和审阅本地差异。
+4. 合并后反向比较目标 tag，确认 `backend/`、`Dockerfile` 和 `deploy/` 与上游一致。
+5. 搜索并删除上游不存在的历史 overlay 文件，不能只处理文本冲突。
+6. 后端 unit/integration、`golangci-lint`、前端 typecheck/Vitest、compose 解析和 release workflow 检查通过后，才发布 fork tag。
+7. 新增任何第三类长期 overlay 必须先形成明确决策，不能因历史 commit 自动延续。
 
 ## 理由
 
-上游在 0.1.126 之后多次重构了 scheduler snapshot、advanced scheduler、OpenAI transport、邮件发送和大型 service 文件。按行为契约重新落地比沿用旧内部实现更能避免隐蔽回归，也能让本地差异继续保持可审计。
-
-## 当前待确认
-
-当前源码仍保留本地紫色 legacy email fallback 模板，但上游已经引入模块化 `NotificationEmailService`，且历史需求倾向于不再本地维护邮件模板。下一次上游合并前应明确该 fallback 是继续保留、删除，还是完全交给上游模块；在确认前不要把它视为稳定的 fork 所有权。
+上游架构持续快速演进。把调度、OAuth、邮件等功能维持为本地补丁会扩大冲突面，并容易让旧行为覆盖上游的新安全与兼容修复。将运行时功能交还上游，只保留部署和视觉差异，可以显著降低升级成本并让行为更可预测。
 
 
 ## timeline
@@ -55,3 +71,21 @@ updated: "2026-07-10T20:50:26"
   summary: "从当前源码、上游合并历史和维护文档提炼 fork 的长期维护边界"
   source: "git first-parent history; upstream v0.1.150 merge; docs/plans"
   affects: [fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T10:34:24
+  kind: decision
+  summary: "将长期本地 overlay 收敛为 Coolify/GHCR 与品牌 UI，429、OAuth 等功能完全跟随上游"
+  source: "用户决策 2026-07-22；upstream v0.1.162 升级"
+  affects: [fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T10:41:19
+  kind: decision
+  summary: "记录 v0.1.162 基线、允许的最终 delta 与反向审计规则"
+  source: "upstream v0.1.162 commit 27f094e09；merge tree audit 2026-07-22"
+  affects: [fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T10:50:28
+  kind: evidence
+  summary: "v0.1.162 合并后 backend、Dockerfile、deploy 与上游一致，允许 delta 仅为 Brain、Coolify 和品牌 UI"
+  source: "git diff against 27f094e09；local CI-equivalent validation 2026-07-22"
+  affects: [fork-upstream-merge-boundaries, coolify-ghcr-release-contract, local-branding-ui-overlay]

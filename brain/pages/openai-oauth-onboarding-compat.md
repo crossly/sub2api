@@ -2,45 +2,28 @@
 id: openai-oauth-onboarding-compat
 title: "保留 OpenAI OAuth 本地导入与测试前 token 刷新"
 category: decision
-status: active
+status: archived
 tags: [openai, oauth, import, account-test]
 created: "2026-07-10T20:50:27"
-updated: "2026-07-10T20:50:27"
+updated: "2026-07-22T10:34:24"
 ---
 
 ## compiled_truth
 
-## 决策
+## 退役决定
 
-本 fork 保留 OpenAI OAuth 账号 onboarding 的两个兼容层：本地文本转导入 JSON，以及管理员账号连接测试前刷新 token。它们是独立于 429 调度的账号维护能力。
+自合并上游 `v0.1.162` 起，本 fork 不再把 OpenAI OAuth 导入转换器、账号测试前 token refresh 或相关 Wire/test 改动作为长期维护 overlay。账号导入、OAuth refresh、连接测试和 Codex onboarding 语义全部采用上游目标版本。
 
-## 本地导入工具
+## 合并要求
 
-`backend/cmd/codex_txt_to_sub2api` 将四列 tab-separated 文本转换为 `sub2api-data` version 1：
+- 不在后续上游合并中重放 `AccountTestService` 的本地 refresh hook。
+- 本地 `codex_txt_to_sub2api` 转换命令若不属于上游版本，应从运行时代码树移除；私有数据转换需求可在仓库外单独处理。
+- 导入 schema、required fields 和 token metadata 以上游实现为准。
+- 未来如需新增本地 onboarding 能力，必须形成新的明确决策，不能依赖本页历史实现。
 
-1. `access_token`
-2. email
-3. `id_token`
-4. `refresh_token|client_id`
+## 历史说明
 
-输出始终包含 `proxies: []`，满足导入 schema；账号类型是 `platform=openai`、`type=oauth`。工具从 `id_token` 尝试补全 `chatgpt_account_id`、`chatgpt_user_id`、`plan_type` 和 `organization_id`，并将 `expires_at` 设为过去时间，促使服务导入后立即刷新，而不是先使用可能过期的 access token。
-
-该工具处理私有 token 数据，应只在本地运行。输出目录 `output/` 已被忽略，不应把生成的账号 JSON 提交进仓库。
-
-## 账号测试前刷新
-
-`AccountTestService` 对带 `refresh_token` 的 OpenAI OAuth 账号，在普通和 compact probe 前调用 `OpenAIOAuthService.RefreshAccountToken`：
-
-- 刷新成功后用新 credential 更新本次内存账号，再发测试请求。
-- 刷新失败时停止 probe，避免拿已知失效 token 请求上游并产生误导结果。
-- 无 refresh token 或非 OpenAI OAuth 账号保持上游默认测试行为。
-
-## 维护影响
-
-- Wire 依赖注入和所有 test stub 必须跟随 `AccountTestService` 构造函数签名。
-- 导入 schema 变化时必须同步 converter 和 tests，尤其不能再次遗漏 required `proxies`。
-- 该兼容层不应改写 429 策略；调度行为由 [[openai-429-over-limit-routing]] 独立负责。
-- 上游合并时按 [[fork-upstream-merge-boundaries]] 单独 reapply 和验证。
+本页此前记录了 `v0.1.146` 之后保留的本地 OAuth onboarding 兼容层。该实现仅作为 Git 历史存在，不再构成当前维护边界。
 
 
 ## timeline
@@ -55,4 +38,16 @@ updated: "2026-07-10T20:50:27"
   kind: decision
   summary: "记录 OpenAI OAuth 账号导入和连接测试兼容层的本地所有权"
   source: "ba048f556; account_test_service.go; codex_txt_to_sub2api command"
+  affects: [openai-oauth-onboarding-compat]
+
+- time: 2026-07-22T10:34:24
+  kind: decision
+  summary: "将 OAuth onboarding 兼容层移出长期 overlay，v0.1.162 起采用上游实现"
+  source: "用户决策 2026-07-22；仅保留 Coolify/GHCR 与品牌 UI"
+  affects: [openai-oauth-onboarding-compat]
+
+- time: 2026-07-22T10:34:24
+  kind: reversal
+  summary: "OAuth onboarding 本地 overlay 已退役；v0.1.162 起采用上游实现"
+  source: brain archive-page
   affects: [openai-oauth-onboarding-compat]

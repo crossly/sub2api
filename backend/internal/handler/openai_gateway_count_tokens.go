@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +12,48 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// GrokCountTokens handles Anthropic-compatible count_tokens requests locally.
+// The route middleware already authenticates the API key and resolves the
+// group; this handler intentionally does not select an account or check billing.
+func (h *OpenAIGatewayHandler) GrokCountTokens(c *gin.Context) {
+	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
+	if err != nil {
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		return
+	}
+	if len(body) == 0 {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
+		return
+	}
+
+	bodyRef := service.NewRequestBodyRef(body)
+	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
+	if err != nil {
+		logRequestBodyParseFailure(requestLogger(c, "handler.openai_gateway.grok_count_tokens"), body, err)
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	if parsedReq.Model == "" {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return
+	}
+
+	estimated, err := service.EstimateGrokCountTokens(parsedReq.Body.Bytes())
+	if err != nil {
+		requestLogger(c, "handler.openai_gateway.grok_count_tokens").Warn("grok_count_tokens.local_estimate_failed", zap.Error(err))
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+
+	setOpsRequestContext(c, parsedReq.Model, false)
+	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(false, false)))
+	c.JSON(http.StatusOK, gin.H{"input_tokens": estimated})
+}
 
 // CountTokens handles Anthropic-compatible POST /v1/messages/count_tokens for OpenAI groups.
 // It validates billing and routes to an OpenAI token-count bridge without taking concurrency slots
@@ -68,6 +109,7 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	body = parsedReq.Body.Bytes()
 	if parsedReq.Model == "" {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -95,108 +137,55 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
+	requestStart := time.Now()
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	currentRoutingModel := routingModel
 	if preferredMappedModel != "" {
 		currentRoutingModel = preferredMappedModel
 	}
-	forwardBody := mappedBodyForMessages(channelMapping.Mapped, channelMapping.MappedModel)
-	defaultMappedModel := preferredMappedModel
-	failedAccountIDs := make(map[int64]struct{})
-	var lastFailoverErr *service.UpstreamFailoverError
-	switchCount := 0
-	maxAccountSwitches := h.maxAccountSwitches
-	if maxAccountSwitches <= 0 {
-		maxAccountSwitches = 3
-	}
-	routingStart := time.Now()
-
-	for {
-		selection, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			sessionHash,
-			currentRoutingModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			openAICompatibleRequestPlatform(apiKey),
-		)
-		service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(routingStart).Milliseconds())
-		if selectErr != nil || selection == nil || selection.Account == nil {
-			if selectErr != nil {
-				reqLog.Warn("openai_count_tokens.account_select_failed", zap.Error(selectErr))
-			}
-			if lastFailoverErr != nil {
-				h.writeCountTokensFailoverError(c, lastFailoverErr)
-				return
-			}
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel, service.PlatformOpenAI)
-			if !cls.ModelNotFound {
-				if selectErr != nil {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, selectErr)
-				} else {
-					markOpsRoutingCapacityLimited(c)
-				}
-			}
-			h.anthropicErrorResponse(c, cls.Status, cls.ErrType, cls.Message)
-			return
+	selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
+		c.Request.Context(),
+		apiKey.GroupID,
+		"",
+		sessionHash,
+		currentRoutingModel,
+		nil,
+		service.OpenAIUpstreamTransportAny,
+		service.OpenAIEndpointCapabilityChatCompletions,
+		false,
+		false,
+		false,
+		openAICompatibleRequestPlatform(apiKey),
+	)
+	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+	if err != nil {
+		requestPlatform := openAICompatibleRequestPlatform(apiKey)
+		reqLog.Warn("openai_count_tokens.account_select_failed", zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)))
+		cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
+		if !cls.ModelNotFound {
+			markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 		}
-
-		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-		writerSizeBeforeForward := c.Writer.Size()
-		forwardErr := h.gatewayService.ForwardCountTokensAsAnthropic(
-			c.Request.Context(), c, account, forwardBody, defaultMappedModel,
-		)
-		if selection.Acquired && selection.ReleaseFunc != nil {
-			selection.ReleaseFunc()
-		}
-		if forwardErr == nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
-			return
-		}
-
-		var failoverErr *service.UpstreamFailoverError
-		if errors.As(forwardErr, &failoverErr) && c.Writer.Size() == writerSizeBeforeForward {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
-			h.gatewayService.RecordOpenAIAccountSwitch()
-			failedAccountIDs[account.ID] = struct{}{}
-			lastFailoverErr = failoverErr
-			if switchCount >= maxAccountSwitches {
-				h.writeCountTokensFailoverError(c, failoverErr)
-				return
-			}
-			switchCount++
-			reqLog.Warn("openai_count_tokens.upstream_failover_switching",
-				zap.Int64("account_id", account.ID),
-				zap.Int("upstream_status", failoverErr.StatusCode),
-				zap.Int("switch_count", switchCount),
-				zap.Int("max_switches", maxAccountSwitches),
-			)
-			continue
-		}
-
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
-		reqLog.Error("openai_count_tokens.forward_failed", zap.Int64("account_id", account.ID), zap.Error(forwardErr))
+		h.anthropicErrorResponse(c, cls.Status, cls.ErrType, cls.Message)
 		return
 	}
-}
+	if selection == nil || selection.Account == nil {
+		cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
+		if !cls.ModelNotFound {
+			markOpsRoutingCapacityLimited(c)
+		}
+		h.anthropicErrorResponse(c, cls.Status, cls.ErrType, cls.Message)
+		return
+	}
 
-func (h *OpenAIGatewayHandler) writeCountTokensFailoverError(c *gin.Context, failoverErr *service.UpstreamFailoverError) {
-	status := http.StatusBadGateway
-	if failoverErr != nil && failoverErr.StatusCode >= 400 && failoverErr.StatusCode <= 599 {
-		status = failoverErr.StatusCode
+	account := selection.Account
+	setOpsSelectedAccount(c, account.ID, account.Platform)
+	if selection.Acquired && selection.ReleaseFunc != nil {
+		defer selection.ReleaseFunc()
 	}
-	message := "Upstream request failed"
-	switch status {
-	case http.StatusTooManyRequests:
-		message = "Rate limit exceeded"
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 529:
-		message = "Upstream service temporarily unavailable"
+	forwardBody := mappedBodyForMessages(channelMapping.Mapped, channelMapping.MappedModel)
+	defaultMappedModel := preferredMappedModel
+
+	if err := h.gatewayService.ForwardCountTokensAsAnthropic(c.Request.Context(), c, account, forwardBody, defaultMappedModel); err != nil {
+		reqLog.Error("openai_count_tokens.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
-	h.anthropicErrorResponse(c, status, "upstream_error", message)
 }

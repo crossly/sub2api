@@ -2,56 +2,42 @@
 slug: roadmap
 title: Roadmap
 role: milestones
-updated: "2026-07-10T20:51:52"
+updated: "2026-07-22T10:50:28"
 ---
 
 # Roadmap
 
-## 状态
+## 当前状态
 
-截至 2026-07-10：
+截至 2026-07-22：
 
-- 上游 `v0.1.150` 已合并。
-- [[openai-429-over-limit-routing]] 已按 v150 架构重做并通过 main/tag CI。
-- `v0.1.150.1` GitHub Release 与 GHCR 发布成功。
-- [[coolify-ghcr-release-contract]]、[[local-branding-ui-overlay]] 和 [[openai-oauth-onboarding-compat]] 均存在于当前代码。
+- 上游 `v0.1.162`（`27f094e09`）已合并到本地 `main`，等待用户决定何时 push/tag/release。
+- [[fork-upstream-merge-boundaries]] 已收敛为只保留 Coolify/GHCR 与品牌 UI 两类应用 overlay。
+- 历史本地 429 和 OAuth onboarding overlay 已归档，运行时完全采用上游实现。
+- [[coolify-ghcr-release-contract]] 已同步 v0.1.162 新环境入口及 PostgreSQL/Redis 启动修复。
+- [[local-branding-ui-overlay]] 已在新版前端上保留。
 
-## 维护路线而非产品承诺
+## 本次验证
 
-仓库中没有经过用户确认的长期产品 roadmap。下面只把现有维护文档和历史流程整理为建议检查窗口，不代表承诺日期。
+- 后端 `make test-unit` 通过。
+- 后端 `make test-integration` 通过。
+- `golangci-lint v2.9.0`：0 issues。
+- 前端 ESLint、Vue typecheck 和 CI critical Vitest：6 files / 95 tests 通过。
+- 品牌响应式专项 Vitest：2 files / 2 tests 通过。
+- 前端 production build 通过。
+- Apple container shell/lifecycle tests 通过。
+- Coolify compose 通过 YAML 结构解析，且环境键覆盖上游标准 compose 的全部入口。
+- Brain link lint 通过。
 
-```mermaid
-gantt
-    title 建议维护窗口（低置信度，待确认）
-    dateFormat YYYY-MM-DD
-    axisFormat %m-%d
-    section 当前基线
-    v0.1.150.1 发布与验证 :done, baseline, 2026-07-10, 1d
-    section 文档与边界
-    修正文档版本漂移 :docs, 2026-07-11, 7d
-    确认邮件 fallback 所有权 :mail, 2026-07-11, 7d
-    section 下次上游合并
-    按功能桶审计 upstream delta :merge, after docs, 7d
-    重跑 429 与 OAuth 专项回归 :tests, after merge, 4d
-    验证 Coolify 和 GHCR release :release, after tests, 3d
-```
+## 固定维护门槛
 
-## 每次上游 release 的固定门槛
+1. 依据 [[fork-upstream-merge-boundaries]] 验证 tag、merge-base 和上游 commit。
+2. 业务代码冲突采用上游，不能重放已退役 overlay。
+3. 只恢复 [[local-branding-ui-overlay]] 与 [[coolify-ghcr-release-contract]]。
+4. 反向 diff 确认 `backend/`、`Dockerfile`、`deploy/` 与目标 tag 一致。
+5. 跑后端 unit/integration、golangci、前端 CI/品牌测试、production build 和 compose 检查。
+6. 验证通过后再 push fork main、创建 fork tag 和 release。
 
-1. 依据 [[fork-upstream-merge-boundaries]] 识别 merge base 和本地 delta。
-2. 先合并上游，再恢复独立 overlay。
-3. 对 [[openai-429-over-limit-routing]] 复核 snapshot、eligibility、runtime block、HTTP/SSE/WS ingestion 和所有 retry loop。
-4. 对 [[openai-oauth-onboarding-compat]] 复核 Wire 构造参数、刷新测试和 import schema。
-5. 对 [[local-branding-ui-overlay]] 复核 fallback logo、landing locale、移动端 guard tests。
-6. 对 [[coolify-ghcr-release-contract]] 复核 image、GoReleaser manifest、tag CI、Security Scan 和 Release。
-7. 所有检查通过后才发布 fork tag。
+## 下一步
 
-## 待用户确认
-
-- 下一次计划跟进的上游版本和发布时间。
-- legacy email fallback 是否继续本地品牌化，还是完全交还上游模块。
-- `codex_txt_to_sub2api` 是否是长期支持工具，还是一次性迁移工具。
-- 是否把当前维护检查进一步自动化为 merge audit 脚本。
-- 除维护上游兼容外，是否存在独立产品目标、商业目标或功能优先级。
-
-在这些问题确认前，不应把示意日期当成实际排期。
+当前合并只在本地完成，尚未 push、打 tag 或发布 release。发布动作应由用户明确指定版本号后执行；release 成功后确认 GHCR `latest` 和具体版本 manifest，再由 Coolify 拉取。
