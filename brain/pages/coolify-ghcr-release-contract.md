@@ -5,7 +5,7 @@ category: decision
 status: active
 tags: [coolify, ghcr, release, deployment]
 created: "2026-07-10T20:50:27"
-updated: "2026-07-22T11:34:10"
+updated: "2026-07-22T20:19:17"
 ---
 
 ## compiled_truth
@@ -19,7 +19,7 @@ Coolify 生产部署使用仓库根部 `docker-compose.coolify.yml`，直接拉�
 - 三个服务：`sub2api`、PostgreSQL 18、Redis 8。
 - `sub2api` 使用 `pull_policy: always`，通过 Coolify 内部路由暴露服务，compose 不绑定宿主机端口。
 - 应用、PostgreSQL 和 Redis 使用 named volumes。
-- `POSTGRES_PASSWORD` 必填；Redis 密码可为空，并通过同一 `REDIS_PASSWORD` 同步服务端、应用和 healthcheck。
+- `POSTGRES_PASSWORD` 必填；Redis ACL username 可为空，Redis 密码可为空，并通过同一 `REDIS_PASSWORD` 同步服务端、应用和 healthcheck。
 - healthcheck 与 `depends_on.condition: service_healthy` 保证依赖就绪后启动应用。
 - `SERVER_HOST=0.0.0.0`、`SERVER_PORT=8080` 固定容器内监听；`SUB2API_IMAGE_REF` 用于日志识别实际镜像。
 - compose 暴露上游标准的 database/Redis、setup migration、update token、server timing 和 image stream/concurrency 环境入口。
@@ -91,3 +91,15 @@ release tag 指向发布代码提交，而默认分支随后可能多一个纯 V
   summary: "采用上游 Axios 1.18.1 与 x/text v0.39.0 热修后，main Security Scan 与常规 CI 全绿，后续 release 扫描门禁恢复"
   source: "commits bde2b0b3f、bf9580510；Security Scan 29888390838；CI 29888390842"
   affects: [coolify-ghcr-release-contract, fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T20:19:17
+  kind: decision
+  summary: "记录 Coolify compose 同步 Redis ACL username 环境入口"
+  source: upstream v0.1.163 deploy/docker-compose.yml
+  affects: [coolify-ghcr-release-contract]
+
+- time: 2026-07-22T20:19:17
+  kind: evidence
+  summary: "v0.1.163 上游新增 REDIS_USERNAME，Coolify compose 已同步应用端环境变量"
+  source: "deploy/docker-compose.yml v0.1.163；docker-compose.coolify.yml"
+  affects: [coolify-ghcr-release-contract]

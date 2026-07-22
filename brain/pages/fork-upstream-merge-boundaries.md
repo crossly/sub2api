@@ -5,21 +5,21 @@ category: decision
 status: active
 tags: [fork, upstream, merge, maintenance]
 created: "2026-07-10T20:50:26"
-updated: "2026-07-22T11:34:10"
+updated: "2026-07-22T20:19:17"
 ---
 
 ## compiled_truth
 
 ## 决策
 
-本仓库是 `Wei-Shaw/sub2api` 的维护型 fork。当前代码基线为上游 `v0.1.162`（`27f094e09`），加上游 tag 后安全修复 `ef3c770d9`（Axios）与 `c5971a6fc`（`golang.org/x/text`），以及少量本地 overlay。主线通过合并上游 release/tag 获取架构、安全修复和业务功能，不把 fork 演变成独立产品分支。
+本仓库是 `Wei-Shaw/sub2api` 的维护型 fork。当前代码基线为上游 `v0.1.163`（`d0bdd7e77163`），加少量本地 overlay。主线通过合并上游 release/tag 获取架构、安全修复和业务功能，不把 fork 演变成独立产品分支。
 
 应用层长期保留的本地 overlay 仅有两类：
 
 - Coolify 部署与自有 GHCR 发布，见 [[coolify-ghcr-release-contract]]。
 - OINANCE 品牌、主题、首页和响应式 UI，见 [[local-branding-ui-overlay]]。
 
-Project Brain 文件是维护知识，不属于运行时功能 overlay。tag 后采用的两个安全提交属于上游热修，不是新的本地功能 overlay；后续目标 tag 包含这些提交后，应自然收敛回上游基线。
+Project Brain 文件是维护知识，不属于运行时功能 overlay。此前 tag 后采用的 Axios 与 `golang.org/x/text` 安全热修已随上游 `v0.1.163` 基线自然收敛，不再构成本地运行时代码差异。
 
 ## 上游所有权
 
@@ -36,9 +36,8 @@ Project Brain 文件是维护知识，不属于运行时功能 overlay。tag 后
 
 ## 当前允许的代码差异
 
-相对上游 `v0.1.162` tag，运行时代码差异只应出现在：
+相对上游 `v0.1.163` tag，运行时代码差异只应出现在：
 
-- 临时采用的上游安全热修：`backend/go.mod`、`backend/go.sum`、`frontend/package.json`、`frontend/pnpm-lock.yaml`。
 - 根目录 `docker-compose.coolify.yml`。
 - 品牌 logo、Tailwind token、landing locale、首页、认证背景、看板图表和响应式 shell/test。
 - `.gitignore` 中允许版本控制 Project Brain 的规则。
@@ -97,3 +96,15 @@ Project Brain 文件是维护知识，不属于运行时功能 overlay。tag 后
   summary: "在 v0.1.162 基线上纳入上游 Axios 与 x/text 安全热修，恢复 Security Scan 全绿"
   source: "upstream ef3c770d9、c5971a6fc；Security Scan 29888390838；CI 29888390842"
   affects: [fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T20:19:17
+  kind: decision
+  summary: "更新当前上游基线到 v0.1.163，并收敛安全热修不再作为本地 delta"
+  source: upstream v0.1.163 merge 2026-07-22
+  affects: [fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T20:19:17
+  kind: evidence
+  summary: "v0.1.163 合并后 backend、Dockerfile、deploy 与上游一致，允许 delta 为 Brain、Coolify 和品牌 UI；前后端本地检查通过"
+  source: "upstream v0.1.163 commit d0bdd7e77163；merge audit 2026-07-22"
+  affects: [fork-upstream-merge-boundaries, coolify-ghcr-release-contract, local-branding-ui-overlay]
