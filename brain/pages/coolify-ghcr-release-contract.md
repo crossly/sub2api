@@ -5,7 +5,7 @@ category: decision
 status: active
 tags: [coolify, ghcr, release, deployment]
 created: "2026-07-10T20:50:27"
-updated: "2026-07-22T11:09:11"
+updated: "2026-07-22T11:34:10"
 ---
 
 ## compiled_truth
@@ -84,4 +84,10 @@ release tag 指向发布代码提交，而默认分支随后可能多一个纯 V
   kind: evidence
   summary: "fork v0.1.162 已发布；GHCR 0.1.162 与 latest 同指向双架构 manifest sha256:297206a026bfcd3122ed695ee3f3bd1f9b5fef249ef26f6f6368837e3b3231a2"
   source: "tag e876a0f0c；Release run 29887063511；GitHub Release v0.1.162；GHCR Registry API"
+  affects: [coolify-ghcr-release-contract, fork-upstream-merge-boundaries]
+
+- time: 2026-07-22T11:34:10
+  kind: evidence
+  summary: "采用上游 Axios 1.18.1 与 x/text v0.39.0 热修后，main Security Scan 与常规 CI 全绿，后续 release 扫描门禁恢复"
+  source: "commits bde2b0b3f、bf9580510；Security Scan 29888390838；CI 29888390842"
   affects: [coolify-ghcr-release-contract, fork-upstream-merge-boundaries]
