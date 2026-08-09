@@ -21,6 +21,7 @@ const {
   getUsageSummary: vi.fn(),
   getLiveCapability: vi.fn(),
   getCapacitySummary: vi.fn(),
+  getLiveCapability: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn()
 }))
